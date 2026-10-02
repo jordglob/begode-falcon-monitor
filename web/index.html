@@ -61,6 +61,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
   <div class="card"><h2>Antaganden</h2><div class="note" id="hass"></div></div>
 </section>
 <section id="log"><div class="card"><h2>Händelser</h2><table id="events"></table></div>
+  <div class="card"><h2>Anslutningens stabilitet</h2><div class="grid" id="stab"></div><table id="drops"></table></div>
   <div class="card"><h2>Länk</h2><div id="link"></div></div></section>
 </main>
 <script>
@@ -111,6 +112,11 @@ async function tick(){
     $('elec').innerHTML=kv('Moderkort',fmt(X.board_temp_c,1,'°C'))+kv('Motor',fmt(X.motor_temp_c,0,'°C'))
       +kv('Fasström (paket 0)',fmt(X.phase_current_a,2,'A'))+kv('Batteriström (paket 7)',fmt(X.battery_current_p7_a,2,'A'))
       +kv('PWM',fmt(X.pwm_pct,0,'%'));
+    const T=L.stability||{};
+    $('stab').innerHTML=kv('Ansluten i',T.connected_for_s!=null?(T.connected_for_s>=3600?fmt(T.connected_for_s/3600,1,'h'):fmt(T.connected_for_s/60,1,'min')):'—')
+      +kv('Anslutningar',fmt(T.connects,0))+kv('Andel tid med data',fmt(T.data_pct,1,'%'))
+      +kv('Senaste avbrott',T.last_drop?new Date(T.last_drop.ts*1000).toLocaleTimeString('sv-SE'):'inga');
+    $('drops').innerHTML=Object.entries(T.drops||{}).map(([r,n])=>`<tr><td>${n} ×</td><td>${r}</td></tr>`).join('');
     $('link').innerHTML=`<pre style="white-space:pre-wrap;font-size:12px">${JSON.stringify(L,null,1)}\npaket: ${JSON.stringify(s.snapshot.counts)}</pre>`;
   }catch(err){$('status').textContent='servern svarar inte';$('dot').className='dot'}
 }

@@ -70,6 +70,9 @@ def log_event(msg: str) -> None:
     events.appendleft({"ts": time.time(), "msg": msg})
 
 
+link.on_event = log_event
+
+
 async def sampler() -> None:
     last_status = None
     while True:
