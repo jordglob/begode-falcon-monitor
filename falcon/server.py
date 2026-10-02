@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, StreamingResponse
 
 from .ble import WheelLink
@@ -22,6 +23,9 @@ from .guard import Guard, summary
 from .health import Health
 from .fastpath import BusTracker, CellRegression
 from . import __version__
+from . import control as ctl
+from .verify import Verifier
+from .protocol import ascii_replies
 from .protocol import FIELD_INFO, UNCERTAIN, decode_p0, decode_p1, decode_p4, decode_p7, Frame
 import json
 from .protocol import WheelState
@@ -63,6 +67,7 @@ def _on_frame(f) -> None:
 
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
+gate = ctl.ControlGate()          # OFF at every start
 guard = Guard(store.get_json("guard_baseline"))
 NOMINAL_WH = float(os.environ.get("FALCON_NOMINAL_WH", "1800"))  # Falcon Pro label: 1.8 kWh
 health = Health(store.db, NOMINAL_WH)
@@ -190,8 +195,8 @@ def api_version():
     return {"app": __version__,
             "ble_module": {"firmware": di.get("firmware"), "hardware": di.get("hardware"),
                            "manufacturer": di.get("manufacturer")},
-            "wheel_firmware": None,
-            "wheel_firmware_note": "kräver läskommandot V – appen skickar inga kommandon än"}
+            "wheel_firmware": di.get("wheel_firmware"),
+            "wheel_firmware_note": "läses med \"Läs hjulets firmware (V)\" under Styrning"}
 
 
 _DECODERS = {0: decode_p0, 1: decode_p1, 4: decode_p4, 7: decode_p7}
@@ -224,6 +229,106 @@ def api_all():
                         "count": r["count"], "period_s": round(period, 2) if period else None,
                         "raw_hex": r["hex"], "u16": r["u16"], "s16": r["s16"], "fields": fields})
     return {"packets": packets, "link": link.info(), "version": __version__}
+
+
+def _host(req: Request) -> str:
+    return req.client.host if req.client else ""
+
+
+def _err(e: Exception, code: int = 403):
+    return JSONResponse({"ok": False, "error": str(e)}, status_code=code)
+
+
+@app.get("/api/control")
+def api_control(req: Request):
+    snap = state.snapshot()
+    settings = []
+    for sid, s in ctl.SETTINGS.items():
+        cur = s["read"](state)[1] if s.get("read") else None
+        settings.append({"id": sid, "label": s["label"], "kind": s["kind"],
+                         "min": s.get("min"), "max": s.get("max"), "step": s.get("step", 1),
+                         "choices": s.get("choices"), "verifiable": s.get("read") is not None,
+                         "current": cur})
+    age = time.time() - link.last_frame_ts if link.last_frame_ts else None
+    return {**gate.status(_host(req)), "connected": link.connected,
+            "motion_block": ctl.motion_block(snap, age), "settings": settings,
+            "log": store.control_log(30)}
+
+
+@app.post("/api/control/enable")
+def api_control_enable(req: Request):
+    try:
+        return {"ok": True, "token": gate.request_enable(_host(req)), "window_s": ctl.CONFIRM_WINDOW_S}
+    except PermissionError as e:
+        return _err(e)
+
+
+@app.post("/api/control/confirm")
+async def api_control_confirm(req: Request):
+    body = await req.json()
+    try:
+        gate.confirm_enable(_host(req), body.get("token", ""))
+    except PermissionError as e:
+        return _err(e)
+    log_event("⚠️ STYRNING PÅSLAGEN (från " + _host(req) + ")")
+    return {"ok": True}
+
+
+@app.post("/api/control/disable")
+def api_control_disable(req: Request):
+    gate.disable("avstängd av användaren")
+    log_event("Styrning avstängd")
+    return {"ok": True}
+
+
+_send_lock = asyncio.Lock()
+
+
+@app.post("/api/control/send")
+async def api_control_send(req: Request):
+    host = _host(req)
+    body = await req.json()
+    setting, value = body.get("setting"), body.get("value")
+    try:
+        gate.check_use(host)
+        cmd = ctl.build(setting, value)
+    except PermissionError as e:
+        return _err(e)
+    except (ValueError, TypeError) as e:
+        return _err(e, 400)
+    if _send_lock.locked():
+        return _err(Exception("ett kommando pågår redan"), 409)
+    async with _send_lock:
+        spec = ctl.SETTINGS[setting]
+
+        def moving():
+            age = time.time() - link.last_frame_ts if link.last_frame_ts else None
+            return ctl.motion_block(state.snapshot(), age) is not None
+
+        reader = spec["read"] or (lambda st: (st.counts.get(4, 0), None))
+        expected = spec["expected"](value) if spec.get("expected") else None
+        before = ctl.flat(state.snapshot())
+        t0 = time.time()
+        try:
+            res = await Verifier(link.write, lambda: reader(state), moving).apply(cmd, expected)
+        except Exception as e:
+            res = None
+            err = str(e)
+        await asyncio.sleep(1.5)          # let every packet row refresh before the diff
+        after = ctl.flat(state.snapshot())
+        reply = ascii_replies(link.notifications_since(t0)) if spec.get("ascii_reply") else None
+        row = {"ts": t0, "host": host, "setting": setting, "value": str(value),
+               "payload": cmd.payload.decode(errors="replace"),
+               "status": res.status if res else "fel", "sends": res.sends if res else 0,
+               "before": str(res.before) if res else None, "after": str(res.after) if res else None,
+               "detail": res.detail if res else err, "changes": ctl.diff(before, after), "reply": reply}
+        store.add_control(row)
+        icon = {"verified": "✅", "mismatch": "❌", "unverifiable": "⚠️", "refused": "⛔"}.get(row["status"], "❓")
+        log_event(f"{icon} Kommando {spec['label']} = {value} ({row['payload']}): {row['status']}"
+                  + (f" – {row['detail']}" if row["detail"] else ""))
+        if setting == "req_version" and reply:
+            link.device_info["wheel_firmware"] = " / ".join(reply)
+        return {"ok": True, **row}
 
 
 @app.get("/api/history")

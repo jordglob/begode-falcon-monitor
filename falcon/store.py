@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS samples (
   sag_mohm REAL, odometer_raw INTEGER, extra TEXT
 );
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS control_log (ts REAL, host TEXT, setting TEXT, value TEXT,
+  payload TEXT, status TEXT, sends INTEGER, before TEXT, after TEXT, detail TEXT, changes TEXT, reply TEXT);
 CREATE TABLE IF NOT EXISTS guard_events (ts REAL, level TEXT, code TEXT, where_ TEXT, text TEXT);
 """
 
@@ -70,3 +72,25 @@ class Store:
         cur = self.db.execute("SELECT ts, level, code, where_, text FROM guard_events "
                               "ORDER BY ts DESC LIMIT ?", (limit,))
         return [dict(zip(("ts", "level", "code", "where", "text"), r)) for r in cur.fetchall()]
+
+    def add_control(self, row: dict) -> None:
+        self.db.execute("INSERT INTO control_log VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                        tuple(json.dumps(row[k]) if isinstance(row.get(k), (dict, list)) else row.get(k)
+                              for k in ("ts", "host", "setting", "value", "payload", "status", "sends",
+                                        "before", "after", "detail", "changes", "reply")))
+        self.db.commit()
+
+    def control_log(self, limit: int = 30) -> list[dict]:
+        cols = ("ts", "host", "setting", "value", "payload", "status", "sends", "before", "after",
+                "detail", "changes", "reply")
+        rows = self.db.execute("SELECT * FROM control_log ORDER BY ts DESC LIMIT ?", (limit,))
+        out = []
+        for r in rows:
+            d = dict(zip(cols, r))
+            for k in ("changes", "reply"):
+                try:
+                    d[k] = json.loads(d[k]) if d[k] else None
+                except Exception:
+                    pass
+            out.append(d)
+        return out

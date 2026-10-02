@@ -5,10 +5,11 @@ wheels with a smart BMS) over Bluetooth LE, running on a Linux computer. Web UI 
 every decoded parameter, energy storage, a **pack imbalance guard** and **battery health /
 degradation** tracking over time. The web UI itself is in Swedish.
 
-> ⚠️ **Not affiliated with Begode.** Use at your own risk. The program is **read-only** – it
-> never sends commands to the wheel. A write-and-verify command core exists in the code and is
-> tested against a fake wheel, but it is not wired in. Dangerous commands (calibration, gear
-> ratio, brake cut-off etc.) are blocked in code and can never be sent.
+> ⚠️ **Not affiliated with Begode.** Use at your own risk. The program is **read-only by
+> default**. Wheel control exists but is **off at every start**, can only be switched on from
+> the computer running the server (never from a phone or another LAN device), needs a two-step
+> confirmation and switches itself off after 10 minutes. Dangerous commands (calibration, gear
+> ratio, brake cut-off, tiltback etc.) are blocked in code and can never be sent.
 
 ## Quick start
 
@@ -36,6 +37,7 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | Energilager | imbalance guard, battery, cells (age + resistance per cell), BMS 1/2, bus (live via SSE, every 0.3 s), motor/electronics |
 | Batterihälsa | capacity and health, energy counters, wheel gauge vs ours, sessions, per-cell resistance, self-discharge, exposure |
 | Alla parametrar | **every decoded field of every packet** with unit, status (✅ ⚠️ ❓), raw bytes, update period |
+| Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff |
 | Logg | events and connection stability (connects, drops with reason, share of time with data) |
 
 The header shows the app version and the signal strength (RSSI) from the last scan. Live RSSI of
@@ -46,14 +48,15 @@ an open connection needs raw HCI access (root) and is therefore not shown.
 | File | Content |
 |---|---|
 | `falcon/protocol.py` | frames (`55 AA … type sub 5A5A5A5A`), decoding of packets 0/1/2/3/4/7, alert bits, field metadata, command table, block list |
-| `falcon/ble.py` | BLE link: bounded connect, data watchdog, BlueZ recovery, auto-reconnect – **no write path** |
+| `falcon/ble.py` | BLE link: bounded connect, data watchdog, BlueZ recovery, auto-reconnect; one guarded write path used only by control |
 | `falcon/fastpath.py` | bus sag on every packet; per-cell internal resistance by time-stamped regression |
 | `falcon/energy.py` | energy view: cells, BMS 1/2, SoC guess, sag per amp, bus health index |
 | `falcon/guard.py` | **imbalance guard**: BMS 1 vs BMS 2 shunt ratio + step alarm, BMS sum vs controller battery current, pack drop-out, string A↔B, cell/bank, temperature, endless balancing, wheel alerts |
 | `falcon/health.py` | **battery health**: Wh/Ah in/out, equivalent cycles, capacity = Ah ÷ ΔSoC (mostly from charges), health vs first measurement + km to 80 %, rides out of range, Wh/km, per-cell resistance, per-cell self-discharge, time at high SoC/temperature, charger drop-outs |
-| `falcon/verify.py` | write twice → read once → verified / mismatch / unknown (not wired in) |
+| `falcon/control.py` | control gate (off by default, local-only, two-step, auto-off), command whitelist, motion block, field diff |
+| `falcon/verify.py` | write twice → read once → verified / mismatch / unverifiable / unknown |
 | `falcon/store.py` | SQLite history |
-| `falcon/server.py` | FastAPI: `/api/state`, `/api/all`, `/api/version`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
+| `falcon/server.py` | FastAPI: `/api/state`, `/api/all`, `/api/version`, `/api/control*`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
 | `web/index.html` | single-page UI |
 | `tests/` | replays a real BLE capture (`tests/fixtures/`) + simulated faults and fake BLE clients |
 
@@ -98,6 +101,13 @@ the guard's first check. Current checks run only under load (≥5 A), voltage ch
 - Leave the wheel on **5 min before and 5 min after** charging (rest voltage → capacity).
 - Rides out of range are reconstructed from rest voltage and odometer before/after.
 
+## Wheel control
+
+Open the *Styrning* tab **on the computer running the server**, click *Slå på styrning …* and
+confirm within 30 s. Each command is sent twice and the wheel's next report is read back; the
+log shows the result and which decoded fields changed. Use it only with the wheel standing still
+(it refuses otherwise) – ideally lifted.
+
 ## Blocked (never sent)
 
 Calibration `cy`, gear ratio `< = >`, brake cut-off/power bridge `e x`, run-mode toggle `+-`,
@@ -105,7 +115,8 @@ Calibration `cy`, gear ratio `< = >`, brake cut-off/power bridge `e x`, run-mode
 
 ## Status
 
-Works against a real wheel at rest. Current scales and a few fields will be confirmed with data
+Works against a real wheel at rest. Control is implemented and tested against a fake wheel; it
+has not yet been used on the real wheel. Current scales and a few fields will be confirmed with data
 under load and while charging. No charts yet – values are shown as numbers and tables.
 See `CHANGELOG.md`.
 

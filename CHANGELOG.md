@@ -2,6 +2,19 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.8.0 – 2026-10-02
+- **Wheel control (off by default)**: new *Styrning* tab. Can only be switched on – and used –
+  from the computer running the server (client IP = loopback or the host's own address); other
+  devices can only watch. Two-step confirmation, off at every server start, auto-off after
+  10 min without a command, anyone can switch it off.
+- Commands: beep, LED/ambient mode (✅ verified via packet 4), pedal mode, headlight, beeper
+  volume, battery alarm (⚠️ sent twice, not yet verifiable), read requests `V`/`N` (text reply
+  shown; `V` fills in the wheel firmware). Tiltback is deliberately not offered until mapped.
+- Refused while the wheel moves, the motor works or telemetry is older than 2 s.
+- Every command logged (SQLite `control_log` + event log) with result and the before/after diff
+  of all decoded fields – unmapped settings show which field moved.
+- The BLE layer has a single guarded write path that refuses blocked commands.
+
 ## 0.7.0 – 2026-10-02
 - **All parameters** tab: every decoded field of every packet with description, unit, status
   (✅ / ⚠️ / ❓), raw bytes, 16-bit words, update period and age (`/api/all`).

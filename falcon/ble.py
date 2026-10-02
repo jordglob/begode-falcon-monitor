@@ -1,6 +1,7 @@
-"""Read-only BLE link to the wheel: connect, subscribe, decode, auto-reconnect.
+"""BLE link to the wheel: connect, subscribe, decode, auto-reconnect.
 
-This module has no write path at all.
+The only write path is WheelLink.write(), called exclusively by falcon/control.py
+(which is off by default). Blocked commands are refused here as a last line of defence.
 
 Robustness (every step has a hard timeout, nothing can hang forever):
   * the whole connect -> service discovery -> subscribe sequence is bounded,
@@ -18,11 +19,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import Counter
+from collections import Counter, deque
 
 from bleak import BleakClient, BleakScanner
 
-from .protocol import CHAR_UUID, FrameAssembler, WheelState
+from .protocol import CHAR_UUID, FrameAssembler, WheelState, is_blocked
 
 log = logging.getLogger("falcon.ble")
 
@@ -107,6 +108,8 @@ class WheelLink:
         self.connected_since: float | None = None
         self.data_s = 0.0
         self._last_notify = 0.0
+        self.client = None
+        self.notifs: deque = deque(maxlen=400)     # (ts, raw bytes) for text replies
         self.on_event = None          # callback(str) for the event log
 
     # ---------- data ----------
@@ -115,6 +118,7 @@ class WheelLink:
         if self._last_notify and now - self._last_notify < self.stale_s:
             self.data_s += now - self._last_notify
         self._last_notify = now
+        self.notifs.append((now, bytes(data)))
         for f in self.asm.feed(bytes(data)):
             self.state.apply(f)
             self.last_frame_ts = time.time()
@@ -133,6 +137,18 @@ class WheelLink:
                     except Exception:
                         pass
 
+    # ---------- the only write path ----------
+    async def write(self, payload: bytes) -> None:
+        if is_blocked(payload):
+            raise PermissionError(f"spärrat kommando {payload!r}")
+        c = self.client
+        if not (self.connected and c is not None and c.is_connected):
+            raise ConnectionError("inte ansluten till hjulet")
+        await asyncio.wait_for(c.write_gatt_char(CHAR_UUID, payload, response=False), 3)
+
+    def notifications_since(self, ts: float) -> bytes:
+        return b"".join(d for t, d in self.notifs if t >= ts)
+
     # ---------- helpers ----------
     def _event(self, msg: str) -> None:
         log.info(msg)
@@ -149,6 +165,7 @@ class WheelLink:
 
     async def _teardown(self, client, address: str | None) -> None:
         self.connected = False
+        self.client = None
         self.connected_since = None
         if client is not None:
             try:
@@ -179,6 +196,7 @@ class WheelLink:
         except asyncio.TimeoutError:
             return f"tidsgräns vid anslutning ({self.connect_timeout:.0f} s)"
         self.connected = True
+        self.client = client
         self.connected_since = time.time()
         self.connects += 1
         self.status = "ansluten"

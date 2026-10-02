@@ -67,6 +67,30 @@ class FrameAssembler:
         return out
 
 
+def ascii_replies(data: bytes, min_len: int = 3) -> list[str]:
+    """Text answers (e.g. to 'V'/'N') hidden between binary frames: remove every
+    complete frame first (their 5A5A5A5A footers read as 'ZZZZ'), then keep printable runs."""
+    rest = bytearray()
+    i = 0
+    while i < len(data):
+        if data[i:i + 2] == HEADER and data[i + 20:i + 24] == FOOTER:
+            i += FRAME_LEN
+            continue
+        rest.append(data[i])
+        i += 1
+    out, cur = [], bytearray()
+    for b in rest:
+        if 32 <= b < 127:
+            cur.append(b)
+        else:
+            if len(cur) >= min_len:
+                out.append(cur.decode())
+            cur = bytearray()
+    if len(cur) >= min_len:
+        out.append(cur.decode())
+    return out
+
+
 # ---------- decoders ----------
 # Field meanings cross-checked against WheelLog (GotwayAdapter) and the Home Assistant
 # "begode" integration (verified live on a Falcon). Where those differ from the official

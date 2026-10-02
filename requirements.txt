@@ -2,3 +2,4 @@ bleak
 fastapi
 uvicorn
 pytest
+httpx

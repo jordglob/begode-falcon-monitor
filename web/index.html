@@ -26,13 +26,16 @@ main{padding:0 16px 24px;max-width:900px;margin:auto}section{display:none}sectio
 .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;border-bottom:1px solid #22262f}
 .ro{font-size:12px;color:var(--ok)}
+.btn{padding:8px 14px;border:0;border-radius:8px;background:#2a2f3a;color:var(--fg);font-size:14px;margin:2px;cursor:pointer}
+.btn:disabled{opacity:.4;cursor:not-allowed}.btn.danger{background:#7a1f1a}.btn.go{background:#1d5e33}
+.ctlon{background:#3a1512 !important;outline:2px solid var(--bad)}
 </style>
 </head>
 <body>
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
 <span id="sig" style="font-size:13px;color:var(--mut)"></span>
 <span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="all">Alla parametrar</button><button data-t="log">Logg</button></nav>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
   <div class="card"><h2>Färd</h2><div class="grid" id="ride"></div></div>
@@ -64,6 +67,13 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <section id="all"><div class="card"><h2>Versioner</h2><div class="grid" id="versions"></div></div>
   <div class="note" style="margin:8px 0">Status: ✅ rimligt/bekräftat · ⚠️ skala från en källa, ej bekräftad under last · ❓ betydelse oklar. Uppdateras varje sekund.</div>
   <div id="allp"></div></section>
+<section id="ctl">
+  <div class="card" id="ctlbanner"><h2>Styrning</h2><div id="ctlstate" style="font-size:20px">—</div>
+    <div id="ctlbtns" style="margin-top:10px"></div><div class="note" id="ctlnote"></div></div>
+  <div class="card"><h2>Inställningar</h2><table id="ctlset"></table>
+    <div class="note">✅ = hjulet rapporterar värdet tillbaka och resultatet verifieras · ⚠️ = skickas två gånger men kan inte läsas tillbaka än – resultatet visar i stället vilka fält som ändrades. Tiltback finns inte med förrän det är kartlagt var hjulet rapporterar det.</div></div>
+  <div class="card"><h2>Kommandologg</h2><table id="ctllog"></table></div>
+</section>
 <section id="log"><div class="card"><h2>Händelser</h2><table id="events"></table></div>
   <div class="card"><h2>Anslutningens stabilitet</h2><div class="grid" id="stab"></div><table id="drops"></table></div>
   <div class="card"><h2>Länk</h2><div id="link"></div></div></section>
@@ -190,9 +200,43 @@ async function alltick(){try{const a=await fetch('/api/all').then(r=>r.json());
 async function vertick(){try{const v=await fetch('/api/version').then(r=>r.json());
   $('versions').innerHTML=kv('Appen',v.app)+kv('Bluetooth-modul',`${v.ble_module.firmware||'—'} (hw ${v.ble_module.hardware||'—'}, ${v.ble_module.manufacturer||'—'})`)
     +kv('Hjulets firmware',v.wheel_firmware||`<span style="font-size:13px">${v.wheel_firmware_note}</span>`);}catch(e){}}
+let ctlToken=null,ctlTokenAt=0,ctlBusy=false;
+async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
+async function ctlEnable(){const r=await post('/api/control/enable');if(!r.ok){$('ctlnote').textContent='⛔ '+r.error;return}
+  ctlToken=r.token;ctlTokenAt=Date.now();ctltick()}
+async function ctlConfirm(){const r=await post('/api/control/confirm',{token:ctlToken});ctlToken=null;
+  $('ctlnote').textContent=r.ok?'':'⛔ '+r.error;ctltick()}
+async function ctlDisable(){await post('/api/control/disable');ctlToken=null;ctltick()}
+async function ctlSend(id){if(ctlBusy)return;const el=$('v_'+id);const v=el?el.value:null;ctlBusy=true;
+  $('ctlnote').textContent='⏳ skickar två gånger och läser tillbaka …';
+  try{const r=await post('/api/control/send',{setting:id,value:v});
+    $('ctlnote').textContent=r.ok===false?'⛔ '+r.error:'';}finally{ctlBusy=false;ctltick()}}
+const RS={verified:'✅ verifierad',mismatch:'❌ hjulet visar annat',unverifiable:'⚠️ skickad, ej verifierbar',refused:'⛔ nekad',unknown:'❓ okänt läge – läs om',fel:'❌ fel'};
+async function ctltick(){try{const c=await fetch('/api/control').then(r=>r.json());
+  $('ctlbanner').classList.toggle('ctlon',c.enabled);
+  $('ctlstate').innerHTML=c.enabled?`<span class="bad">⚠️ STYRNING PÅ</span> <span style="font-size:14px">– stängs av automatiskt om ${Math.floor(c.auto_off_in_s/60)}:${String(c.auto_off_in_s%60).padStart(2,'0')}</span>`
+    :`<span class="ok">🔒 Styrning av</span>`+(c.reason_off?` <span class="note">(${c.reason_off})</span>`:'');
+  const local=c.local_client;
+  let b='';
+  if(c.enabled) b=`<button class="btn" onclick="ctlDisable()">Stäng av styrningen</button>`;
+  else if(ctlToken&&Date.now()-ctlTokenAt<30000) b=`<button class="btn danger" onclick="ctlConfirm()">Bekräfta: slå på styrning (inom 30 s)</button> <button class="btn" onclick="ctlToken=null;ctltick()">Avbryt</button>`;
+  else b=`<button class="btn danger" ${local?'':'disabled'} onclick="ctlEnable()">Slå på styrning …</button>`;
+  $('ctlbtns').innerHTML=b+(local?'':' <span class="note">Styrning bara från X230 – den här enheten kan bara titta.</span>');
+  const can=c.enabled&&local&&!c.motion_block&&c.connected;
+  if(c.enabled&&c.motion_block&&!ctlBusy)$('ctlnote').textContent='⛔ '+c.motion_block;
+  const editing=document.activeElement&&$('ctlset').contains(document.activeElement);
+  if(!editing) $('ctlset').innerHTML=c.settings.map(s=>{let inp='';
+    if(s.kind==='int')inp=`<input id="v_${s.id}" type="number" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.current??s.min}" style="width:70px">`;
+    if(s.kind==='choice')inp=`<select id="v_${s.id}">${Object.entries(s.choices).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>`;
+    return `<tr><td>${s.verifiable?'✅':'⚠️'}</td><td>${s.label}</td><td>${s.current!=null?'nu: <b>'+s.current+'</b>':''}</td><td>${inp}</td>
+      <td><button class="btn go" ${can&&!ctlBusy?'':'disabled'} onclick="ctlSend('${s.id}')">${s.kind==='action'?'Kör':'Skicka'}</button></td></tr>`}).join('');
+  $('ctllog').innerHTML='<tr><td>Tid</td><td>Inställning</td><td>Skickat</td><td>Resultat</td><td>Ändrade fält / svar</td></tr>'+c.log.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td>
+    <td>${x.setting} = ${x.value}</td><td><code>${x.payload}</code> × ${x.sends}</td><td>${RS[x.status]||x.status}${x.detail?' – '+x.detail:''}</td>
+    <td class="note">${x.reply&&x.reply.length?'svar: '+x.reply.join(' / ')+'<br>':''}${x.changes&&Object.keys(x.changes).length?Object.entries(x.changes).map(([k,v])=>`${k}: ${v[0]} → ${v[1]}`).join('<br>'):'inga ändrade fält'}</td></tr>`).join('');
+}catch(e){}}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
-tick();logtick();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);setInterval(tick,1000);setInterval(logtick,5000);
+tick();logtick();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>
