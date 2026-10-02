@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("FALCON_DB", os.path.join(tempfile.mkdtemp(), "t.db"))
+_tmp = tempfile.mkdtemp()
+os.environ.setdefault("FALCON_DB", os.path.join(_tmp, "t.db"))
+os.environ.setdefault("FALCON_BACKUPS", os.path.join(_tmp, "backups"))
 
 from falcon import control as ctl                                  # noqa: E402
 from falcon.ble import WheelLink                                    # noqa: E402
@@ -91,6 +93,7 @@ def test_ascii_reply_between_frames():
     frame = bytes.fromhex("55aa19500000003d0021fe5cfa150c8800010018") + b"\x5a" * 4
     assert ascii_replies(frame + b"GW1634003" + frame) == ["GW1634003"]
     assert ascii_replies(frame * 3) == []                   # footers 'ZZZZ' are not replies
+    assert ascii_replies(b"\x5a" * 4 + b"GW1634001" + frame) == ["GW1634001"]   # cut frame
 
 
 def test_ble_write_refuses_blocked_and_disconnected():
@@ -174,3 +177,17 @@ def test_api_refuses_when_moving(api):
     touch()
     r = c.post("/api/control/send", json={"setting": "pedal", "value": "hard"}).json()
     assert r["status"] == "refused" and fl.sent == []
+
+
+def test_api_backup_and_restore(api):
+    c, fl, touch, srv = api
+    assert c.post("/api/backup").json()["ok"]                       # led_mode 3 saved
+    name = c.get("/api/backup").json()["items"][0]["name"]
+    srv.state.p4 = {**srv.state.p4, "led_mode": 1}                    # changed elsewhere
+    assert c.get("/api/backup").json()["items"][0]["differs_now"] == {"p4.led_mode": [3, 1]}
+    assert c.post("/api/backup/restore", json={"name": name}).status_code == 403   # control off
+    c.post("/api/control/confirm", json={"token": c.post("/api/control/enable").json()["token"]})
+    touch()
+    r = c.post("/api/backup/restore", json={"name": name}).json()
+    assert r["results"] == [{"field": "p4.led_mode", "status": "verified", "value": 3}]
+    assert fl.sent == [b"WM3", b"WM3"]

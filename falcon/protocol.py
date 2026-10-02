@@ -88,7 +88,9 @@ def ascii_replies(data: bytes, min_len: int = 3) -> list[str]:
             cur = bytearray()
     if len(cur) >= min_len:
         out.append(cur.decode())
-    return out
+    # a reply that starts right after a frame cut by the capture window keeps the footer
+    # remnant 'Z'/'ZZ'.. (0x5A) in front of it
+    return [r.lstrip("Z") for r in out if len(r.lstrip("Z")) >= min_len]
 
 
 # ---------- decoders ----------

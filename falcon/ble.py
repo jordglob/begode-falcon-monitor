@@ -188,7 +188,7 @@ class WheelLink:
         """Connect + subscribe (bounded), then watch the data flow. Returns the drop reason."""
         async def setup():
             await client.connect()
-            if not self.device_info:
+            if "firmware" not in self.device_info:
                 await self._read_device_info(client)
             await client.start_notify(CHAR_UUID, self._notify)
         try:

@@ -313,6 +313,7 @@ class Health:
         if temp is not None and temp >= 45: v[4] += dt
         if mode == "charge": v[5] += dt
         self.db.execute("INSERT OR REPLACE INTO exposure_daily VALUES (?,?,?,?,?,?,?)", (day, *v))
+        self.db.commit()          # never keep a write transaction open between ticks
 
     # ---------- per-cell resistance from current steps ----------
     def _resistance(self, ts, current, cells):

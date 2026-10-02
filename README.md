@@ -28,6 +28,7 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | `FALCON_PORT` | web port, default 8096 |
 | `FALCON_DB` | SQLite file, default `~/.local/share/begode-falcon/history.db` |
 | `FALCON_NOMINAL_WH` | nominal capacity for comparison, default 1800 (Falcon Pro) |
+| `FALCON_BACKUPS` | settings backup folder, default `~/.local/share/begode-falcon/backups` |
 
 ## Web UI tabs
 
@@ -37,7 +38,7 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | Energilager | imbalance guard, battery, cells (age + resistance per cell), BMS 1/2, bus (live via SSE, every 0.3 s), motor/electronics |
 | Batterihälsa | capacity and health, energy counters, wheel gauge vs ours, sessions, per-cell resistance, self-discharge, exposure |
 | Alla parametrar | **every decoded field of every packet** with unit, status (✅ ⚠️ ❓), raw bytes, update period |
-| Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff |
+| Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff; **settings backup** (manual, daily, on change) with download and restore |
 | Logg | events and connection stability (connects, drops with reason, share of time with data) |
 
 The header shows the app version and the signal strength (RSSI) from the last scan. Live RSSI of
@@ -53,10 +54,11 @@ an open connection needs raw HCI access (root) and is therefore not shown.
 | `falcon/energy.py` | energy view: cells, BMS 1/2, SoC guess, sag per amp, bus health index |
 | `falcon/guard.py` | **imbalance guard**: BMS 1 vs BMS 2 shunt ratio + step alarm, BMS sum vs controller battery current, pack drop-out, string A↔B, cell/bank, temperature, endless balancing, wheel alerts |
 | `falcon/health.py` | **battery health**: Wh/Ah in/out, equivalent cycles, capacity = Ah ÷ ΔSoC (mostly from charges), health vs first measurement + km to 80 %, rides out of range, Wh/km, per-cell resistance, per-cell self-discharge, time at high SoC/temperature, charger drop-outs |
+| `falcon/backup.py` | settings backup snapshots, change detection, restorable fields |
 | `falcon/control.py` | control gate (off by default, local-only, two-step, auto-off), command whitelist, motion block, field diff |
 | `falcon/verify.py` | write twice → read once → verified / mismatch / unverifiable / unknown |
 | `falcon/store.py` | SQLite history |
-| `falcon/server.py` | FastAPI: `/api/state`, `/api/all`, `/api/version`, `/api/control*`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
+| `falcon/server.py` | FastAPI: `/api/state`, `/api/all`, `/api/version`, `/api/control*`, `/api/backup*`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
 | `web/index.html` | single-page UI |
 | `tests/` | replays a real BLE capture (`tests/fixtures/`) + simulated faults and fake BLE clients |
 

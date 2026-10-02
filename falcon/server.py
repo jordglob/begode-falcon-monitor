@@ -25,6 +25,7 @@ from .fastpath import BusTracker, CellRegression
 from . import __version__
 from . import control as ctl
 from .verify import Verifier
+from .backup import Backups, RESTORABLE
 from .protocol import ascii_replies
 from .protocol import FIELD_INFO, UNCERTAIN, decode_p0, decode_p1, decode_p4, decode_p7, Frame
 import json
@@ -68,6 +69,8 @@ def _on_frame(f) -> None:
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
 gate = ctl.ControlGate()          # OFF at every start
+backups = Backups(Path(os.environ.get("FALCON_BACKUPS",
+                                      Path.home() / ".local/share/begode-falcon/backups")))
 guard = Guard(store.get_json("guard_baseline"))
 NOMINAL_WH = float(os.environ.get("FALCON_NOMINAL_WH", "1800"))  # Falcon Pro label: 1.8 kWh
 health = Health(store.db, NOMINAL_WH)
@@ -78,6 +81,9 @@ def log_event(msg: str) -> None:
 
 
 link.on_event = log_event
+_wf = store.get_json("wheel_firmware")
+if _wf:
+    link.device_info["wheel_firmware"] = _wf["value"]
 
 
 async def sampler() -> None:
@@ -89,6 +95,27 @@ async def sampler() -> None:
             last_status = link.status
         if link.connected and state.groups:
             store.add(energy_view(state.snapshot(), bus.sag.estimate(), link.info(), store.baseline_sag_ohm()), state.p0, state.p4)
+
+
+def _auto_backup() -> None:
+    """Daily snapshot, plus one whenever a setting differs from the latest backup
+    (e.g. changed in the phone app)."""
+    if not state.p4 or len(state.groups) < 4:
+        return
+    try:
+        items = backups.list()
+        reason = None
+        if not items or backups.latest_age_s() > 86400:
+            reason = "automatisk (dygnsvis)"
+        else:
+            ch = Backups.changes_vs_now(backups.load(items[0]["name"]), state.snapshot())
+            if ch:
+                reason = "automatisk (inställning ändrad: " + ", ".join(ch) + ")"
+        if reason:
+            b = backups.make(state.snapshot(), state.raw, link.device_info, __version__, reason)
+            log_event(f"💾 Inställningsbackup {b['name']} – {reason}")
+    except Exception as e:
+        log_event(f"Backup: fel {e}")
 
 
 async def guard_loop() -> None:
@@ -117,6 +144,7 @@ async def guard_loop() -> None:
         if n % 60 == 0:
             store.set_json("guard_baseline", guard.export_baseline())
             health.save()
+            _auto_backup()
 
 
 @asynccontextmanager
@@ -284,20 +312,17 @@ def api_control_disable(req: Request):
 _send_lock = asyncio.Lock()
 
 
-@app.post("/api/control/send")
-async def api_control_send(req: Request):
-    host = _host(req)
-    body = await req.json()
-    setting, value = body.get("setting"), body.get("value")
-    try:
-        gate.check_use(host)
-        cmd = ctl.build(setting, value)
-    except PermissionError as e:
-        return _err(e)
-    except (ValueError, TypeError) as e:
-        return _err(e, 400)
+class Busy(Exception):
+    pass
+
+
+async def _send(host: str, setting: str, value) -> dict:
+    """Gate -> whitelist -> motion check -> write twice / read once -> log. Raises
+    PermissionError / ValueError / Busy."""
+    gate.check_use(host)
+    cmd = ctl.build(setting, value)
     if _send_lock.locked():
-        return _err(Exception("ett kommando pågår redan"), 409)
+        raise Busy("ett kommando pågår redan")
     async with _send_lock:
         spec = ctl.SETTINGS[setting]
 
@@ -309,11 +334,11 @@ async def api_control_send(req: Request):
         expected = spec["expected"](value) if spec.get("expected") else None
         before = ctl.flat(state.snapshot())
         t0 = time.time()
+        err = None
         try:
             res = await Verifier(link.write, lambda: reader(state), moving).apply(cmd, expected)
         except Exception as e:
-            res = None
-            err = str(e)
+            res, err = None, str(e)
         await asyncio.sleep(1.5)          # let every packet row refresh before the diff
         after = ctl.flat(state.snapshot())
         reply = ascii_replies(link.notifications_since(t0)) if spec.get("ascii_reply") else None
@@ -328,7 +353,78 @@ async def api_control_send(req: Request):
                   + (f" – {row['detail']}" if row["detail"] else ""))
         if setting == "req_version" and reply:
             link.device_info["wheel_firmware"] = " / ".join(reply)
-        return {"ok": True, **row}
+            store.set_json("wheel_firmware", {"value": link.device_info["wheel_firmware"], "ts": t0})
+        return row
+
+
+@app.post("/api/control/send")
+async def api_control_send(req: Request):
+    body = await req.json()
+    try:
+        row = await _send(_host(req), body.get("setting"), body.get("value"))
+    except PermissionError as e:
+        return _err(e)
+    except (ValueError, TypeError) as e:
+        return _err(e, 400)
+    except Busy as e:
+        return _err(e, 409)
+    return {"ok": True, **row}
+
+
+@app.post("/api/backup")
+def api_backup_make():
+    if not state.p4:
+        return _err(Exception("inga data från hjulet ännu"), 409)
+    b = backups.make(state.snapshot(), state.raw, link.device_info, __version__, "manuell")
+    log_event(f"💾 Inställningsbackup {b['name']} – manuell")
+    return {"ok": True, "name": b["name"]}
+
+
+@app.get("/api/backup")
+def api_backup_list():
+    snap = state.snapshot()
+    items = backups.list()
+    for it in items[:20]:
+        try:
+            it["differs_now"] = Backups.changes_vs_now(backups.load(it["name"]), snap) if snap.get("p4") else None
+        except Exception:
+            it["differs_now"] = None
+    return {"items": items, "restorable_fields": RESTORABLE, "folder": str(backups.folder)}
+
+
+@app.get("/api/backup/file/{name}")
+def api_backup_file(name: str):
+    try:
+        backups.load(name)
+    except ValueError as e:
+        return _err(e, 404)
+    return FileResponse(backups.folder / name, media_type="application/json", filename=name)
+
+
+@app.post("/api/backup/restore")
+async def api_backup_restore(req: Request):
+    body = await req.json()
+    try:
+        doc = backups.load(body.get("name", ""))
+        gate.check_use(_host(req))
+    except ValueError as e:
+        return _err(e, 404)
+    except PermissionError as e:
+        return _err(e)
+    results = []
+    for field, value in (doc.get("restorable") or {}).items():
+        current = (state.p4 or {}).get(field.split(".", 1)[1])
+        if current == value:
+            results.append({"field": field, "status": "redan rätt", "value": value})
+            continue
+        try:
+            row = await _send(_host(req), RESTORABLE[field], value)
+            results.append({"field": field, "status": row["status"], "value": value})
+        except Exception as e:
+            results.append({"field": field, "status": "fel", "detail": str(e), "value": value})
+    log_event(f"♻️ Återställning från {body.get('name')}: " +
+              ", ".join(f"{r['field']}={r['value']} {r['status']}" for r in results))
+    return {"ok": True, "results": results}
 
 
 @app.get("/api/history")

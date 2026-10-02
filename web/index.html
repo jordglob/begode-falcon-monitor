@@ -70,6 +70,10 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <section id="ctl">
   <div class="card" id="ctlbanner"><h2>Styrning</h2><div id="ctlstate" style="font-size:20px">—</div>
     <div id="ctlbtns" style="margin-top:10px"></div><div class="note" id="ctlnote"></div></div>
+  <div class="card"><h2>Backup av inställningar</h2>
+    <button class="btn go" onclick="bkMake()">💾 Spara inställningar nu</button> <span class="note" id="bknote"></span>
+    <table id="bklist"></table>
+    <div class="note">Sparas också automatiskt en gång per dygn och när en inställning ändras (även från mobilappen). Varje backup innehåller alla avkodade inställningar, hjulets firmware, mätarställning och alla råa paket. Återställning skriver bara inställningar som hjulet rapporterar tillbaka (just nu: stämningsljus) och kräver att styrningen är på.</div></div>
   <div class="card"><h2>Inställningar</h2><table id="ctlset"></table>
     <div class="note">✅ = hjulet rapporterar värdet tillbaka och resultatet verifieras · ⚠️ = skickas två gånger men kan inte läsas tillbaka än – resultatet visar i stället vilka fält som ändrades. Tiltback finns inte med förrän det är kartlagt var hjulet rapporterar det.</div></div>
   <div class="card"><h2>Kommandologg</h2><table id="ctllog"></table></div>
@@ -213,7 +217,7 @@ async function ctlSend(id){if(ctlBusy)return;const el=$('v_'+id);const v=el?el.v
     $('ctlnote').textContent=r.ok===false?'⛔ '+r.error:'';}finally{ctlBusy=false;ctltick()}}
 const RS={verified:'✅ verifierad',mismatch:'❌ hjulet visar annat',unverifiable:'⚠️ skickad, ej verifierbar',refused:'⛔ nekad',unknown:'❓ okänt läge – läs om',fel:'❌ fel'};
 async function ctltick(){try{const c=await fetch('/api/control').then(r=>r.json());
-  $('ctlbanner').classList.toggle('ctlon',c.enabled);
+  $('ctlbanner').classList.toggle('ctlon',c.enabled);bkCtl={enabled:c.enabled,local:c.local_client};
   $('ctlstate').innerHTML=c.enabled?`<span class="bad">⚠️ STYRNING PÅ</span> <span style="font-size:14px">– stängs av automatiskt om ${Math.floor(c.auto_off_in_s/60)}:${String(c.auto_off_in_s%60).padStart(2,'0')}</span>`
     :`<span class="ok">🔒 Styrning av</span>`+(c.reason_off?` <span class="note">(${c.reason_off})</span>`:'');
   const local=c.local_client;
@@ -234,9 +238,21 @@ async function ctltick(){try{const c=await fetch('/api/control').then(r=>r.json(
     <td>${x.setting} = ${x.value}</td><td><code>${x.payload}</code> × ${x.sends}</td><td>${RS[x.status]||x.status}${x.detail?' – '+x.detail:''}</td>
     <td class="note">${x.reply&&x.reply.length?'svar: '+x.reply.join(' / ')+'<br>':''}${x.changes&&Object.keys(x.changes).length?Object.entries(x.changes).map(([k,v])=>`${k}: ${v[0]} → ${v[1]}`).join('<br>'):'inga ändrade fält'}</td></tr>`).join('');
 }catch(e){}}
+async function bkMake(){const r=await post('/api/backup');$('bknote').textContent=r.ok?'✅ sparad: '+r.name:'⛔ '+r.error;bktick()}
+async function bkRestore(n){$('bknote').textContent='⏳ återställer …';const r=await post('/api/backup/restore',{name:n});
+  $('bknote').textContent=r.ok?r.results.map(x=>`${x.field} = ${x.value}: ${x.status}`).join(' · ')||'inget att återställa':'⛔ '+r.error;bktick();ctltick()}
+let bkCtl={enabled:false,local:false};
+async function bktick(){try{const b=await fetch('/api/backup').then(r=>r.json());
+  $('bklist').innerHTML='<tr><td>Sparad</td><td>Orsak</td><td>Firmware</td><td>Mätare</td><td>Skillnad mot nu</td><td></td></tr>'+b.items.slice(0,15).map(x=>{
+    const d=x.differs_now&&Object.keys(x.differs_now).length?Object.entries(x.differs_now).map(([k,v])=>`${k}: ${v[0]} → nu ${v[1]}`).join('<br>'):'samma';
+    const can=bkCtl.enabled&&bkCtl.local&&Object.keys(x.restorable||{}).length;
+    return `<tr><td>${new Date(x.created*1000).toLocaleString('sv-SE',{dateStyle:'short',timeStyle:'short'})}</td><td class="note">${x.reason}</td><td>${x.wheel_firmware||'—'}</td>
+      <td>${x.odometer_m!=null?(x.odometer_m/1000).toFixed(1)+' km':'—'}</td><td class="note">${d}</td>
+      <td><a href="/api/backup/file/${x.name}" download>ladda ner</a> <button class="btn" ${can?'':'disabled'} onclick="bkRestore('${x.name}')">återställ</button></td></tr>`}).join('');
+}catch(e){}}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
-tick();logtick();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
+tick();logtick();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

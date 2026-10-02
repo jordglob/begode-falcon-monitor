@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS guard_events (ts REAL, level TEXT, code TEXT, where_ 
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=10)
+        self.db.execute("PRAGMA journal_mode=WAL")      # readers never block the writer
         self.db.executescript(SCHEMA)
 
     def add(self, ev: dict, p0: dict, p4: dict) -> None:

@@ -2,6 +2,17 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.9.0 – 2026-10-02
+- **Settings backup**: dated JSON snapshots (decoded settings, wheel firmware, BLE module,
+  odometer, every raw packet row) in `~/.local/share/begode-falcon/backups/` (`FALCON_BACKUPS`).
+  Saved manually from the *Styrning* tab, automatically once a day and whenever a setting differs
+  from the latest backup (e.g. changed in the phone app). Download, "difference vs now" and
+  restore of verifiable settings (LED mode) through the normal control path.
+- Text replies to `V`/`N` no longer keep footer remnants (`ZZZZ`) of a cut frame.
+- Wheel firmware (from `V`) is stored and survives restarts.
+- SQLite in WAL mode and no write transaction left open between ticks (a 60 s open
+  transaction blocked other writers).
+
 ## 0.8.0 – 2026-10-02
 - **Wheel control (off by default)**: new *Styrning* tab. Can only be switched on – and used –
   from the computer running the server (client IP = loopback or the host's own address); other
