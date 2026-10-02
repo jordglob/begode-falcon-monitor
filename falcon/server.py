@@ -21,6 +21,8 @@ from .energy import energy_view
 from .guard import Guard, summary
 from .health import Health
 from .fastpath import BusTracker, CellRegression
+from . import __version__
+from .protocol import FIELD_INFO, UNCERTAIN, decode_p0, decode_p1, decode_p4, decode_p7, Frame
 import json
 from .protocol import WheelState
 from .store import Store
@@ -180,6 +182,48 @@ def api_guard():
 @app.get("/api/health")
 def api_health():
     return health.report()
+
+
+@app.get("/api/version")
+def api_version():
+    di = link.device_info
+    return {"app": __version__,
+            "ble_module": {"firmware": di.get("firmware"), "hardware": di.get("hardware"),
+                           "manufacturer": di.get("manufacturer")},
+            "wheel_firmware": None,
+            "wheel_firmware_note": "kräver läskommandot V – appen skickar inga kommandon än"}
+
+
+_DECODERS = {0: decode_p0, 1: decode_p1, 4: decode_p4, 7: decode_p7}
+
+
+@app.get("/api/all")
+def api_all():
+    """Every decoded field of every packet, with metadata, raw words and update rate."""
+    now = time.time()
+    packets = []
+    for key in sorted(state.raw, key=lambda k: tuple(int(x) for x in k.split("."))):
+        r = state.raw[key]
+        t, sub = (int(x) for x in key.split("."))
+        span = max(r["ts"] - r["first_ts"], 1e-6)
+        period = span / (r["count"] - 1) if r["count"] > 1 else None
+        fields = []
+        dec = _DECODERS.get(t)
+        if dec:
+            d = dec(Frame(t, sub, bytes.fromhex(r["hex"])))
+            for name, val in d.items():
+                desc, unit, status = FIELD_INFO.get(f"p{t}.{name}", (name, "", "unknown"))
+                fields.append({"field": name, "value": val, "desc": desc, "unit": unit,
+                               "status": status, "note": UNCERTAIN.get(f"p{t}.{name}")})
+        elif t in (2, 3):
+            for j, mv in enumerate(r["u16"]):
+                fields.append({"field": f"{'A' if t == 2 else 'B'}{sub * 8 + j + 1}", "value": mv,
+                               "desc": f"Cellspänning sträng {'A' if t == 2 else 'B'}", "unit": "mV",
+                               "status": "ok", "note": None})
+        packets.append({"packet": t, "sub": sub, "age_s": round(now - r["ts"], 2),
+                        "count": r["count"], "period_s": round(period, 2) if period else None,
+                        "raw_hex": r["hex"], "u16": r["u16"], "s16": r["s16"], "fields": fields})
+    return {"packets": packets, "link": link.info(), "version": __version__}
 
 
 @app.get("/api/history")

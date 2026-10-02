@@ -1,98 +1,114 @@
 # begode-falcon-monitor
 
-Inofficiell övervakning av **Begode Falcon Pro** (och troligen andra Begode-hjul med smart BMS)
-över Bluetooth LE, körd på en Linux-dator. Webbgränssnitt med live-data, energilager,
-**obalansvakt** för batteripacken och **batterihälsa/degradering** över tid.
+Unofficial monitor for the **Begode Falcon Pro** electric unicycle (and probably other Begode
+wheels with a smart BMS) over Bluetooth LE, running on a Linux computer. Web UI with live data,
+every decoded parameter, energy storage, a **pack imbalance guard** and **battery health /
+degradation** tracking over time. The web UI itself is in Swedish.
 
-> ⚠️ **Inte kopplat till Begode.** Används på egen risk. Programmet **läser bara** – det skickar
-> inga kommandon till hjulet. Kommandokärnan (skriv–verifiera) finns i koden och är testad mot ett
-> låtsashjul, men är inte inkopplad. Farliga kommandon (kalibrering, utväxling, bromsbrytning m.fl.)
-> är spärrade i koden och kan aldrig skickas.
+> ⚠️ **Not affiliated with Begode.** Use at your own risk. The program is **read-only** – it
+> never sends commands to the wheel. A write-and-verify command core exists in the code and is
+> tested against a fake wheel, but it is not wired in. Dangerous commands (calibration, gear
+> ratio, brake cut-off etc.) are blocked in code and can never be sent.
 
-## Starta
+## Quick start
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m falcon.server          # http://<datorns-ip>:8096 (LAN)
+.venv/bin/python -m falcon.server          # http://<computer-ip>:8096 (LAN)
 ```
 
-Utan inställning ansluter programmet till första hjulet som annonserar ett namn som börjar på
-`GotWay`/`Begode` och låser sig sedan till det. Ange ett specifikt hjul med `FALCON_ADDR=AA:BB:…`.
-Hjulet tar bara en Bluetooth-anslutning åt gången – stäng hjulets app i mobilen först.
+Without configuration the program connects to the first wheel advertising a name starting with
+`GotWay`/`Begode` and then locks to it. Set `FALCON_ADDR=AA:BB:…` to pick a specific wheel.
+The wheel accepts only one BLE connection at a time – close the wheel's phone app first.
 
-| Variabel | Betydelse |
+| Variable | Meaning |
 |---|---|
-| `FALCON_ADDR` | hjulets Bluetooth-adress (valfri) |
-| `FALCON_PORT` | webbport, standard 8096 |
-| `FALCON_DB` | SQLite-fil, standard `~/.local/share/begode-falcon/history.db` |
-| `FALCON_NOMINAL_WH` | nominell kapacitet för jämförelse, standard 1800 (Falcon Pro) |
+| `FALCON_ADDR` | wheel Bluetooth address (optional) |
+| `FALCON_PORT` | web port, default 8096 |
+| `FALCON_DB` | SQLite file, default `~/.local/share/begode-falcon/history.db` |
+| `FALCON_NOMINAL_WH` | nominal capacity for comparison, default 1800 (Falcon Pro) |
 
-## Struktur
+## Web UI tabs
 
-| Fil | Innehåll |
+| Tab | Content |
 |---|---|
-| `falcon/protocol.py` | ramar (`55 AA … typ sub 5A5A5A5A`), avkodning av paket 0/1/2/3/4/7, hjulets larmbitar, kommandotabell, spärrlista |
-| `falcon/verify.py` | skriv två gånger → läs en gång (färskt paket efter sista skrivningen) → verifierad / avvikelse / okänt |
-| `falcon/ble.py` | BLE-anslutning med automatisk återanslutning – **ingen skrivväg** |
-| `falcon/fastpath.py` | kraftbussen räknas vid varje paket (0,3 s) och skickas via server-push; inre motstånd per cell med tidsstämplad regression |
-| `falcon/energy.py` | energilager: celler, BMS 1/2, laddnivå (gissad), spänningsfall/A och hälsoindex (gissat) |
-| `falcon/guard.py` | **obalansvakt**: BMS 1 mot BMS 2 (shuntkvot, steg-larm), BMS-summa mot moderkortets batteriström, bortfallet paket, sträng A↔B, cell/bank, temperatur, balansering som aldrig blir klar, hjulets egna larm |
-| `falcon/health.py` | **batterihälsa**: Wh/Ah in/ut, ekvivalenta cykler, kapacitet = Ah ÷ ΔSoC (främst laddningar), hälsa mot första mätningen + km till 80 %, turer utom räckhåll, Wh/km, inre motstånd per cell, självurladdning per cell, tid vid hög laddnivå/värme, glapp i laddningen |
-| `falcon/store.py` | SQLite-historik |
-| `falcon/server.py` | FastAPI: `/api/state`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
-| `web/index.html` | flikar Live / Energilager / Batterihälsa / Logg |
-| `tests/` | spelar upp en riktig BLE-inspelning (`tests/fixtures/`) + simulerade fel |
+| Live | speed, voltage, trip, odometer, wheel alerts, settings reported by the wheel |
+| Energilager | imbalance guard, battery, cells (age + resistance per cell), BMS 1/2, bus (live via SSE, every 0.3 s), motor/electronics |
+| Batterihälsa | capacity and health, energy counters, wheel gauge vs ours, sessions, per-cell resistance, self-discharge, exposure |
+| Alla parametrar | **every decoded field of every packet** with unit, status (✅ ⚠️ ❓), raw bytes, update period |
+| Logg | events and connection stability (connects, drops with reason, share of time with data) |
 
-## Protokollet i korthet
+The header shows the app version and the signal strength (RSSI) from the last scan. Live RSSI of
+an open connection needs raw HCI access (root) and is therefore not shown.
 
-Hjulet skickar en fast omgång **var 0,3 s**: paket 0 + 4 + 7 + en BMS-rad + en cellbank (8 celler).
-Varje cell förnyas alltså var 1,8 s och varje BMS-rad var 1,2 s – det styrs av hjulets programvara.
+## Layout
 
-| Paket | Innehåll |
+| File | Content |
 |---|---|
-| 0 | spänning (16S-skalad), fart, tripp (m), **fasström** /100 A, kortets temperatur |
-| 1 | smart BMS: rad 0–1 = BMS 1 (sträng A), rad 2–3 = BMS 2 (sträng B); spänning /10, ström /10 A, 4 temperaturer, halva paketets spänning, statusbitar |
-| 2 / 3 | cellspänningar i mV, sträng A / B, 3 banker × 8 |
-| 4 | mätarställning (m), inställningsbitar, auto-avstängning, LED-läge, **larmbitar** |
-| 7 | **batteriström** = −värde/100 A (negativt = laddning), motortemperatur, PWM |
+| `falcon/protocol.py` | frames (`55 AA … type sub 5A5A5A5A`), decoding of packets 0/1/2/3/4/7, alert bits, field metadata, command table, block list |
+| `falcon/ble.py` | BLE link: bounded connect, data watchdog, BlueZ recovery, auto-reconnect – **no write path** |
+| `falcon/fastpath.py` | bus sag on every packet; per-cell internal resistance by time-stamped regression |
+| `falcon/energy.py` | energy view: cells, BMS 1/2, SoC guess, sag per amp, bus health index |
+| `falcon/guard.py` | **imbalance guard**: BMS 1 vs BMS 2 shunt ratio + step alarm, BMS sum vs controller battery current, pack drop-out, string A↔B, cell/bank, temperature, endless balancing, wheel alerts |
+| `falcon/health.py` | **battery health**: Wh/Ah in/out, equivalent cycles, capacity = Ah ÷ ΔSoC (mostly from charges), health vs first measurement + km to 80 %, rides out of range, Wh/km, per-cell resistance, per-cell self-discharge, time at high SoC/temperature, charger drop-outs |
+| `falcon/verify.py` | write twice → read once → verified / mismatch / unknown (not wired in) |
+| `falcon/store.py` | SQLite history |
+| `falcon/server.py` | FastAPI: `/api/state`, `/api/all`, `/api/version`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
+| `web/index.html` | single-page UI |
+| `tests/` | replays a real BLE capture (`tests/fixtures/`) + simulated faults and fake BLE clients |
 
-Fält som fortfarande är osäkra är märkta med ❓ i gränssnittet (`protocol.UNCERTAIN`).
+## Protocol summary
 
-**Tack till** [WheelLog](https://github.com/Wheellog/Wheellog.Android) och
-[jphein/begode](https://github.com/jphein/begode) – deras dokumenterade tolkning av
-Begode-protokollet användes för att rätta fältbetydelserna. Ingen kod är kopierad därifrån.
+The wheel sends a fixed round **every 0.3 s**: packet 0 + 4 + 7 + one BMS row + one cell bank
+(8 cells). Each cell is therefore refreshed every 1.8 s and each BMS row every 1.2 s – this is set
+by the wheel's firmware and cannot be changed over BLE.
 
-## Gissade värden – vad de betyder
+| Packet | Content |
+|---|---|
+| 0 | voltage (16S-scaled), speed, trip (m), **phase current** /100 A, board temperature |
+| 1 | smart BMS: rows 0–1 = BMS 1 (string A), rows 2–3 = BMS 2 (string B); voltage /10, current /10 A, 4 temperatures, half-pack voltage, status bits |
+| 2 / 3 | cell voltages in mV, string A / B, 3 banks × 8 |
+| 4 | odometer (m), settings bits, auto power-off, LED mode, **alert bits** |
+| 7 | **battery current** = −value/100 A (negative = charging), motor temperature, PWM |
 
-- **Laddnivå**: medelcellspänning → typisk Li-ion-kurva. Gäller bara när hjulet står still.
-- **Spänningsfall/A**: lutningen på bussens spänning mot batteriströmmen under belastning.
-  Det är batteri + kablage + buss tillsammans. **Protokollet har ingen kondensatordata.**
-- **Hälsoindex**: 100 = samma spänningsfall som de första mätningarna; lägre = sämre.
+Fields that are still uncertain are marked ❓ in the UI (`protocol.UNCERTAIN`).
 
-## Obalansvakt – bakgrund
+**Thanks to** [WheelLog](https://github.com/Wheellog/Wheellog.Android) and
+[jphein/begode](https://github.com/jphein/begode) – their documented interpretation of the
+Begode protocol was used to correct the field meanings. No code was copied from them.
 
-Ett verkligt paketfel som fick vakten att byggas: shunten (strömmätmotståndet) bestod av
-4 parallella motstånd där ett aldrig var lött. De 3 kvar fick 133 % ström (178 % värme) tills de
-brann av. Eftersom BMS räknar med 4 motstånd visar ett paket med ett saknat motstånd ≈33 % för hög
-ström – det är vaktens första kontroll. Strömkontrollerna körs bara under belastning (≥5 A),
-spänningskontrollerna bara i vila (<1 A).
+## Estimated values
 
-## Batterihälsa – så får du bra mätningar
+- **State of charge**: mean cell voltage → typical Li-ion curve. Valid only at rest.
+- **Sag per amp**: slope of bus voltage vs battery current under load – battery + wiring + bus
+  together. **The protocol carries no capacitor data.**
+- **Bus health index**: 100 = same sag as the first measurements; lower = worse.
 
-- Ladda inom Bluetooth-räckhåll för datorn med hjulet **påslaget**.
-- Låt hjulet stå påslaget **5 min före och 5 min efter** laddningen (vilospänning → kapacitet).
-- Turer utanför räckhåll räknas ut från vilospänning och mätarställning före/efter.
+## Imbalance guard – background
 
-## Spärrat (skickas aldrig)
+A real pack failure motivated the guard: the current shunt consisted of 4 parallel resistors
+and one was never soldered. The remaining 3 carried 133 % current (178 % heat) until they burned
+off. Because the BMS assumes 4 resistors, a pack with one missing reads ≈33 % too much current –
+the guard's first check. Current checks run only under load (≥5 A), voltage checks only at rest
+(<1 A).
 
-Kalibrering `cy`, utväxling `< = >`, bromsbrytning/kraftbrygga `e x`, körlägesbyte `+-`,
-`Wl WC WU WX WR`, enhetsbyte `m g`, programuppdatering.
+## Battery health – getting good measurements
+
+- Charge within BLE range of the computer with the wheel **switched on**.
+- Leave the wheel on **5 min before and 5 min after** charging (rest voltage → capacity).
+- Rides out of range are reconstructed from rest voltage and odometer before/after.
+
+## Blocked (never sent)
+
+Calibration `cy`, gear ratio `< = >`, brake cut-off/power bridge `e x`, run-mode toggle `+-`,
+`Wl WC WU WX WR`, unit switch `m g`, firmware update.
 
 ## Status
 
-Fungerar mot ett riktigt hjul i vila. Strömskalorna och några fält bekräftas först med data
-under belastning och laddning. Diagram saknas ännu – värdena visas som siffror och tabeller.
+Works against a real wheel at rest. Current scales and a few fields will be confirmed with data
+under load and while charging. No charts yet – values are shown as numbers and tables.
+See `CHANGELOG.md`.
 
-## Licens
+## License
 
-MIT – se `LICENSE`.
+MIT – see `LICENSE`.

@@ -53,13 +53,24 @@ async def bluez_remove(address: str) -> None:
         pass
 
 
+LAST_RSSI: dict = {}     # address -> (rssi dBm, ts) from the advertisement that found it
+
+
+async def _scan(match, timeout: float):
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    for dev, adv in found.values():
+        if match(dev, adv):
+            LAST_RSSI[dev.address] = (adv.rssi, time.time())
+            return dev
+    return None
+
+
 async def scan_by_name(timeout: float):
-    return await BleakScanner.find_device_by_filter(
-        lambda d, ad: (d.name or ad.local_name or "").startswith(NAME_PREFIXES), timeout=timeout)
+    return await _scan(lambda d, ad: (d.name or ad.local_name or "").startswith(NAME_PREFIXES), timeout)
 
 
 async def scan_by_address(address: str, timeout: float):
-    return await BleakScanner.find_device_by_address(address, timeout=timeout)
+    return await _scan(lambda d, ad: d.address.upper() == address.upper(), timeout)
 
 
 class WheelLink:
@@ -229,7 +240,11 @@ class WheelLink:
     def info(self) -> dict:
         now = time.time()
         age = now - self.last_frame_ts if self.last_frame_ts else None
-        return {"address": self.address or self.address_seen, "connected": self.connected,
+        addr = self.address or self.address_seen
+        rssi = LAST_RSSI.get(addr) if addr else None
+        return {"address": addr, "connected": self.connected,
+                "rssi_dbm": rssi[0] if rssi else None,
+                "rssi_age_s": round(now - rssi[1]) if rssi else None,
                 "status": self.status,
                 "last_frame_age_s": round(age, 1) if age is not None else None,
                 "dropped_bytes": self.asm.dropped, "device_info": self.device_info,

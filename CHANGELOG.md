@@ -1,0 +1,45 @@
+# Changelog
+
+All notable changes. Versions follow `falcon/__init__.py`.
+
+## 0.7.0 – 2026-10-02
+- **All parameters** tab: every decoded field of every packet with description, unit, status
+  (✅ / ⚠️ / ❓), raw bytes, 16-bit words, update period and age (`/api/all`).
+- App version and BLE module firmware shown (`/api/version`); wheel firmware needs the `V`
+  request and is not read yet.
+- Signal strength (RSSI) from the last scan shown in the header.
+- README in English; this changelog.
+
+## 0.6.0 – 2026-10-02
+- **Stable BLE link**: hard 30 s bound on connect + service discovery + subscribe; 8 s data
+  watchdog forces a reconnect; BlueZ-side disconnect after every failure; BlueZ is told to forget
+  the wheel after 2 failed connects in a row (fixes a stuck "Connected" state where every
+  disconnect failed with `Disconnected (0x0e)`); backoff 1 → 10 s.
+- Connection stability on the Logg tab: connects, drops with reason, share of time with data.
+- Server stops within 2 s on Ctrl+C even with open SSE streams.
+
+## 0.5.0 – 2026-10-02
+- **Field meanings corrected** after comparison with WheelLog and the Home Assistant begode
+  integration: two smart BMS units (rows 0–1 / 2–3) instead of four groups; packet 7 carries the
+  battery current, packet 0 the phase current; half-pack voltages; wheel alert bits decoded.
+- Imbalance guard compares BMS 1 with BMS 2; battery health no longer double-counts current.
+- Wheel auto-discovery by name, then locked to the first wheel found. First public release.
+
+## 0.4.0 – 2026-10-02
+- Bus voltage/sag/health index recomputed on every packet (0.3 s) and pushed to the page via SSE.
+- Per-cell internal resistance by time-stamped regression; per-cell value age shown.
+
+## 0.3.0 – 2026-10-02
+- **Battery health**: capacity from charges (Ah ÷ ΔSoC from rest voltage), health vs first
+  measurement, km to 80 %, rides out of range, Wh/km, per-cell resistance at current steps,
+  per-cell self-discharge, exposure (high SoC / temperature), charger drop-outs, wheel gauge
+  check. Nominal capacity 1800 Wh.
+
+## 0.2.0 – 2026-10-02
+- **Imbalance guard**: shunt ratio and step alarm (unsoldered/burned shunt resistor), sum vs
+  controller, pack drop-out, string/cell/bank, temperature, endless balancing.
+
+## 0.1.0 – 2026-10-02
+- Read-only BLE dashboard: frame decoding, live data, energy view with 48 cell voltages,
+  SoC guess, sag estimate, SQLite history; write-and-verify core (not wired in) with blocked
+  dangerous commands.

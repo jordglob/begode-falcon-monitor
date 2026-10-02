@@ -196,3 +196,20 @@ def test_soc_guess_and_bus_index(replay):
     ev = energy_view(replay[0].snapshot(), SagEstimator().estimate(), {})
     assert ev["battery"]["soc_guess_valid"] and 85 < ev["battery"]["soc_guess_pct"] < 95
     assert bus_index(0.10, 0.08) == 80.0 and bus_index(None, 0.08) is None
+
+
+def test_raw_store_covers_every_packet_row(replay):
+    raw = replay[0].raw
+    assert set(raw) == {"0.24", "1.0", "1.1", "1.2", "1.3", "2.0", "2.1", "2.2",
+                        "3.0", "3.1", "3.2", "4.24", "7.24"}
+    assert raw["1.0"]["count"] == 39 and len(raw["0.24"]["u16"]) == 8
+
+
+def test_field_info_covers_all_decoded_fields(replay):
+    from falcon.protocol import FIELD_INFO
+    st = replay[0]
+    for t, d in ((0, st.p0), (4, st.p4), (7, st.p7), (1, st.groups[0])):
+        for name in d:
+            if (t, name) in ((1, "group"), (1, "bms"), (1, "half")):
+                continue
+            assert f"p{t}.{name}" in FIELD_INFO, f"p{t}.{name}"

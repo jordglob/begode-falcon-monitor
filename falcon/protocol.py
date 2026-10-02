@@ -10,6 +10,7 @@ com.euc.android.protocol.*). Frame layout as captured from a Falcon Pro:
 from __future__ import annotations
 
 import struct
+import time
 from dataclasses import dataclass, field
 
 HEADER = b"\x55\xaa"
@@ -73,9 +74,59 @@ class FrameAssembler:
 
 UNCERTAIN = {
     "p0.word3_raw": "räckvidd enligt Begode-appen, läses inte av WheelLog",
+    "p1.group": ("BMS-rad (0–3)", "", "ok"),
+    "p1.bms": ("BMS (1 = sträng A, 2 = sträng B)", "", "ok"),
+    "p1.half": ("Paketets halva (1/2)", "", "ok"),
     "p1.pwm_limit_or_alarm": "PWM-gräns eller batterivarning (källorna säger olika)",
     "p4.tiltback_or_pedal": "tiltback-fart km/h (WheelLog) eller pedalkänslighet (Begode-appen)",
     "p1.mos": "MOS-bitarna visar 'av' trots ström — betydelse oklar",
+}
+
+# field -> (description, unit, status)  status: ok = plausible/confirmed,
+# scale = scale from one source, not confirmed under load, unknown = meaning unclear
+FIELD_INFO = {
+    "p0.voltage_raw": ("Spänning, rå (16S-skalad, ×1,5 = verklig)", "0,01 V", "ok"),
+    "p0.speed_kmh": ("Fart", "km/h", "scale"),
+    "p0.word3_raw": ("Ord 3 (räckvidd enligt Begode-appen)", "", "unknown"),
+    "p0.trip_m": ("Tripp", "m", "ok"),
+    "p0.phase_current_a": ("Fasström (motor)", "A", "scale"),
+    "p0.board_temp_c": ("Moderkortets temperatur (MPU6050)", "°C", "ok"),
+    "p0.word7_raw": ("Ord 7 (PWM bara på egen firmware)", "", "unknown"),
+    "p0.flags_raw": ("Flaggor", "", "unknown"),
+    "p1.group": ("BMS-rad (0–3)", "", "ok"),
+    "p1.bms": ("BMS (1 = sträng A, 2 = sträng B)", "", "ok"),
+    "p1.half": ("Paketets halva (1/2)", "", "ok"),
+    "p1.pwm_limit_or_alarm": ("PWM-gräns eller batterivarning", "%", "unknown"),
+    "p1.voltage_v": ("Batterispänning (BMS)", "V", "ok"),
+    "p1.current_a": ("Ström genom detta BMS (shunt)", "A", "scale"),
+    "p1.temp_a_c": ("Temperatur (givare 1 eller 3)", "°C", "ok"),
+    "p1.temp_b_c": ("Temperatur (givare 2 eller 4)", "°C", "ok"),
+    "p1.half_voltage_v": ("Halva paketets spänning", "V", "ok"),
+    "p1.activity": ("Aktivitet", "", "ok"),
+    "p1.temp_state": ("Temperaturstatus", "", "ok"),
+    "p1.volt_state": ("Spänningsstatus", "", "ok"),
+    "p1.protection": ("Skydd", "", "ok"),
+    "p1.mos": ("MOS", "", "unknown"),
+    "p1.cell_balance": ("Cellbalansering", "", "ok"),
+    "p1.group_balance": ("Gruppbalansering", "", "ok"),
+    "p1.info_raw": ("Statusord, rått", "", "ok"),
+    "p4.odometer_raw": ("Mätarställning", "m", "ok"),
+    "p4.settings_raw": ("Inställningsord, rått", "", "ok"),
+    "p4.pedal_mode_bits": ("Pedalläge (bitar 13–14)", "", "unknown"),
+    "p4.speed_alarm_mode": ("Fartlarmläge (bitar 10–11)", "", "scale"),
+    "p4.roll_angle_mode": ("Lutningsvinkel-läge (bitar 7–8)", "", "scale"),
+    "p4.in_miles": ("Miles", "", "ok"),
+    "p4.auto_power_off_s": ("Auto-avstängning", "s", "ok"),
+    "p4.tiltback_or_pedal": ("Tiltback-fart eller pedalkänslighet", "", "unknown"),
+    "p4.led_mode": ("LED-/stämningsljusläge", "", "ok"),
+    "p4.alert_raw": ("Larmbyte, rått", "", "ok"),
+    "p4.alerts": ("Hjulets larm", "", "ok"),
+    "p4.light_mode": ("Ljusläge", "", "scale"),
+    "p4.vehicle_id_raw": ("Fordons-ID", "", "unknown"),
+    "p7.battery_current_a": ("Batteriström (negativ = laddning)", "A", "scale"),
+    "p7.advanced_config_raw": ("Avancerad konfiguration", "", "unknown"),
+    "p7.motor_temp_c": ("Motortemperatur", "°C", "ok"),
+    "p7.pwm_pct": ("PWM", "%", "scale"),
 }
 
 ALERT_BITS = [(0x01, "hög effekt"), (0x02, "fartlarm 2"), (0x04, "fartlarm 1"),
@@ -178,9 +229,16 @@ class WheelState:
     cells: dict = field(default_factory=dict)    # "A0".."B2" -> [mV x8]
     counts: dict = field(default_factory=dict)   # frame type -> count
     unknown_types: dict = field(default_factory=dict)
+    raw: dict = field(default_factory=dict)      # "type.sub" -> last raw frame + count
+    started: float = field(default_factory=time.time)
 
     def apply(self, f: Frame) -> None:
         self.counts[f.type] = self.counts.get(f.type, 0) + 1
+        k = f"{f.type}.{f.sub}"
+        prev = self.raw.get(k, {})
+        self.raw[k] = {"ts": time.time(), "hex": f.payload.hex(), "u16": list(f.u16()),
+                       "s16": list(f.s16()), "count": prev.get("count", 0) + 1,
+                       "first_ts": prev.get("first_ts", time.time())}
         if f.type == 0:
             self.p0 = decode_p0(f)
         elif f.type == 1:

@@ -30,8 +30,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 </head>
 <body>
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
-<span class="ro" style="margin-left:auto">🔒 endast läsning</span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="log">Logg</button></nav>
+<span id="sig" style="font-size:13px;color:var(--mut)"></span>
+<span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="all">Alla parametrar</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
   <div class="card"><h2>Färd</h2><div class="grid" id="ride"></div></div>
@@ -60,6 +61,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
   <div class="card"><h2>Exponering (åldrande): tid vid hög laddnivå och värme</h2><table id="hexp"></table></div>
   <div class="card"><h2>Antaganden</h2><div class="note" id="hass"></div></div>
 </section>
+<section id="all"><div class="card"><h2>Versioner</h2><div class="grid" id="versions"></div></div>
+  <div class="note" style="margin:8px 0">Status: ✅ rimligt/bekräftat · ⚠️ skala från en källa, ej bekräftad under last · ❓ betydelse oklar. Uppdateras varje sekund.</div>
+  <div id="allp"></div></section>
 <section id="log"><div class="card"><h2>Händelser</h2><table id="events"></table></div>
   <div class="card"><h2>Anslutningens stabilitet</h2><div class="grid" id="stab"></div><table id="drops"></table></div>
   <div class="card"><h2>Länk</h2><div id="link"></div></div></section>
@@ -171,9 +175,24 @@ async function cellstick(){try{const c=await fetch('/api/cells_fast').then(r=>r.
   $('cfast').innerHTML=ks.length?`<div class="cells">${ks.map(k=>{const x=c.cells[k];return `<div class="cell ${c.flag.includes(k)?'lo':''}" title="${k}: ${x.n?('n='+x.n+', strömspridning '+x.i_std+' A'):'för lite strömvariation'}">${k}<br>${(x.mv/1000).toFixed(3)}<br><span style="color:var(--mut)">${x.age_s}s</span><br>${x.mohm!=null?x.mohm.toFixed(1)+' mΩ':'–'}</div>`}).join('')}</div>`
     +(c.flag.length?`<div class="note warn">⚠️ Högre motstånd: ${c.flag.join(', ')}</div>`:`<div class="note">${c.fitted} av ${ks.length} celler har motståndsvärde.</div>`):'<div class="note">Väntar på data.</div>';
 }catch(e){}}
+const ST={ok:'✅',scale:'⚠️',unknown:'❓'};
+function sigText(L){if(L.rssi_dbm==null)return '';const r=L.rssi_dbm,q=r>=-60?'stark':r>=-75?'ok':r>=-85?'svag':'mycket svag';
+  return `📶 ${r} dBm (${q}, vid sökning för ${L.rssi_age_s} s sedan)`}
+async function alltick(){try{const a=await fetch('/api/all').then(r=>r.json());
+  $('sig').textContent=sigText(a.link);$('ver').textContent='v'+a.version;
+  if(!$('all').classList.contains('act'))return;
+  const names={0:'Paket 0 – färd',1:'Paket 1 – BMS',2:'Paket 2 – celler sträng A',3:'Paket 3 – celler sträng B',4:'Paket 4 – inställningar/larm',7:'Paket 7 – motor/batteriström'};
+  $('allp').innerHTML=a.packets.map(p=>`<div class="card"><h2>${names[p.packet]||'Paket '+p.packet} · rad ${p.sub===24?'–':p.sub}</h2>
+    <div class="note">uppdateras var ${p.period_s??'?'} s · senast ${p.age_s} s sedan · ${p.count} st · rått: <code>${p.raw_hex}</code></div>
+    <table>${p.fields.map(f=>`<tr><td>${ST[f.status]||''}</td><td>${f.desc}</td><td style="font-variant-numeric:tabular-nums"><b>${Array.isArray(f.value)?(f.value.join(', ')||'inga'):f.value}</b> ${f.unit}</td><td class="note">${f.field}${f.note?' – '+f.note:''}</td></tr>`).join('')}</table>
+    <div class="note">ord (u16): ${p.u16.join(' · ')}</div></div>`).join('');
+}catch(e){}}
+async function vertick(){try{const v=await fetch('/api/version').then(r=>r.json());
+  $('versions').innerHTML=kv('Appen',v.app)+kv('Bluetooth-modul',`${v.ble_module.firmware||'—'} (hw ${v.ble_module.hardware||'—'}, ${v.ble_module.manufacturer||'—'})`)
+    +kv('Hjulets firmware',v.wheel_firmware||`<span style="font-size:13px">${v.wheel_firmware_note}</span>`);}catch(e){}}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
-tick();logtick();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);setInterval(tick,1000);setInterval(logtick,5000);
+tick();logtick();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>
