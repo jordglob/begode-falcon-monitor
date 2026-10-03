@@ -2,6 +2,14 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.21.0 – 2026-10-03
+- **Learned cell resistance survives restarts** (regression state saved every minute and
+  restored at start).
+- **Per-cell resistance history** by day × temperature bin (5 °C) × load bin (string current
+  0–15 / 15–35 / 35+ A), regression per bin, stored in SQLite (`cell_ir_bins`). Batterihälsa
+  shows a table of every cell per temperature and load, a trend normalised to 25 °C (first day →
+  latest) and flags cells clearly above the others at the same temperature (`/api/cells/history`).
+
 ## 0.20.0 – 2026-10-03
 - **Battery temperature vs available power**: R(T) learned from this pack (cell resistance ×
   BMS temperature sensors, Arrhenius fit; cautious default until data spans 5 °C). Available

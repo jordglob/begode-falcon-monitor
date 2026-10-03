@@ -29,6 +29,7 @@ from .elevation import Dem
 from .beeps import BeepWatch
 from . import tripmax
 from .thermal import Thermal, RModel, charge_temp_ok, battery_temp
+from .cellhistory import CellHistory
 from . import __version__
 from . import control as ctl
 from .verify import Verifier
@@ -59,6 +60,7 @@ cellreg = CellRegression()
 events: deque = deque(maxlen=200)
 subscribers: set = set()
 _last_group_ts = 0.0
+_last_temp = [None]
 
 
 def _publish(msg: dict) -> None:
@@ -90,12 +92,20 @@ def _on_frame(f) -> None:
                         bus.current(state.p7))
         guard.load_spread.add(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()), state.battery_current(),
                               r_lookup=cellreg.resistance)
+        i_now = bus.current(state.p7)
+        t_now = battery_temp(state.snapshot()) if f.sub == 0 else _last_temp[0]
+        _last_temp[0] = t_now
+        if i_now is not None:
+            for j, mv in enumerate(f.u16()):
+                cellhist.add(ts, f"{'A' if f.type == 2 else 'B'}{f.sub * 8 + j + 1}", i_now / 2, mv, t_now)
 
 
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
 gate = ctl.ControlGate()          # OFF at every start
 thermal = Thermal(RModel(store.get_json("thermal_points") or []))
+cellreg.restore(store.get_json("cell_regression"))      # learned resistance survives restarts
+cellhist = CellHistory(store.db)
 _last_charge_temp_note = 0.0
 beepwatch = BeepWatch(Path(os.environ.get("FALCON_BLACKBOX", Path.home() / ".local/share/begode-falcon/blackbox")),
                       on_event=lambda m: log_event(m), on_record=lambda e: store.add_beep_event(e))
@@ -267,6 +277,8 @@ async def guard_loop() -> None:
             health.save()
             _auto_backup()
             store.set_json("thermal_points", list(thermal.model.points))
+            store.set_json("cell_regression", cellreg.export())
+            cellhist.flush()
 
 
 @asynccontextmanager
@@ -864,6 +876,12 @@ def api_thermal():
     return {**thermal.last, "model": {"fitted": thermal.model.fitted, "points": len(thermal.model.points),
                                       "curve": thermal.model.curve(),
                                       "scatter": list(thermal.model.points)[-300:]}}
+
+
+@app.get("/api/cells/history")
+def api_cells_history(days: int = 365):
+    cellhist.flush()
+    return cellhist.report(thermal.model, days)
 
 
 @app.get("/api/thermal/history")

@@ -101,6 +101,14 @@ class CellRegression:
             if current_a is not None:
                 f.add(ts, current_a, mv)
 
+    def export(self) -> dict:
+        return {k: [f.t, f.n, f.si, f.sv, f.sii, f.siv, f.svv] for k, f in self.fits.items() if f.n}
+
+    def restore(self, data: dict | None) -> None:
+        for k, v in (data or {}).items():
+            f = self.fits.setdefault(k, _Fit())
+            f.t, f.n, f.si, f.sv, f.sii, f.siv, f.svv = v
+
     def resistance(self, key: str) -> float | None:
         f = self.fits.get(key)
         r = f.result() if f else None
