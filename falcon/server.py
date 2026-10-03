@@ -87,7 +87,8 @@ def _on_frame(f) -> None:
     elif f.type in (2, 3):
         cellreg.on_bank(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()),
                         bus.current(state.p7))
-        guard.load_spread.add(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()), state.battery_current())
+        guard.load_spread.add(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()), state.battery_current(),
+                              r_lookup=cellreg.resistance)
 
 
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)

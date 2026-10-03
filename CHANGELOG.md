@@ -2,6 +2,13 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.19.0 – 2026-10-03
+- **Whole-pack comparison under load (all 48 cells)**: every cell value is referred to "no
+  load" with its own measured internal resistance and the current at its own sample time, so
+  cells measured up to 1.8 s apart become comparable. Finds a weak cell against all 47 others
+  (warn 40 mV / alarm 80 mV below the median) and a whole weaker bank (30 mV) that the
+  within-bank check cannot see. Samples right after a current jump (> 10 A in 0.6 s) are skipped.
+
 ## 0.18.0 – 2026-10-03
 - **Cell spread under load** (imbalance guard): measured **inside each bank** of 8 cells (they
   are sampled at the same instant – banks are up to 1.8 s apart and would mix different load

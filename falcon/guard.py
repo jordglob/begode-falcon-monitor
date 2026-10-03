@@ -53,6 +53,13 @@ LOAD_LEARN = 60                # samples to learn the normal mV-per-A spread
 LOAD_EXCESS_WARN_MV = 40       # above the learned normal for the same current
 
 
+COMP_MAX_AGE_S = 3.0          # a cell value older than this is not used
+COMP_MIN_CELLS = 40           # of 48
+COMP_DI_SKIP_A = 10.0         # current changed more than this in the last 0.6 s -> skip sample
+COMP_CELL_WARN_MV, COMP_CELL_ALARM_MV = 40, 80
+COMP_BANK_WARN_MV = 30
+
+
 class LoadSpread:
     """Within-bank cell spread under load; learns this pack's normal spread per ampere and
     names the cell that sags most."""
@@ -62,9 +69,31 @@ class LoadSpread:
         self.learn: list[float] = []
         self.baseline = baseline_mv_per_a
         self.worst_cells: dict[str, int] = {}
+        self.comp: dict[str, tuple] = {}            # "A13" -> (ts, compensated mV, raw mV, bank key)
+        self.currents: list[tuple[float, float]] = []
 
-    def add(self, ts: float, string: str, bank: int, cells_mv: list[int], pack_current: float | None) -> None:
-        if pack_current is None or abs(pack_current) < LOAD_SPREAD_MIN_A or len(cells_mv) < 2:
+    def _current_jump(self, ts: float, i: float) -> bool:
+        self.currents.append((ts, i))
+        self.currents = [c for c in self.currents if ts - c[0] <= 1.0]
+        old = [c[1] for c in self.currents if ts - c[0] >= 0.6]
+        return bool(old) and abs(i - old[-1]) > COMP_DI_SKIP_A
+
+    def add(self, ts: float, string: str, bank: int, cells_mv: list[int], pack_current: float | None,
+            r_lookup=None) -> None:
+        if pack_current is None:
+            return
+        # whole-pack comparison: every cell referred to "no load" with its own resistance,
+        # so cells measured up to 1.8 s apart (different load) become comparable
+        if r_lookup is not None and abs(pack_current) >= LOAD_SPREAD_MIN_A and not self._current_jump(ts, pack_current):
+            keys = [f"{string}{bank * 8 + j + 1}" for j in range(len(cells_mv))]
+            rs = [r_lookup(k) for k in keys]
+            known = sorted(r for r in rs if r)
+            r_fill = known[len(known) // 2] if known else None
+            if r_fill is not None:
+                i_string = pack_current / 2
+                for k, mv, r in zip(keys, cells_mv, rs):
+                    self.comp[k] = (ts, mv + (r or r_fill) * i_string, mv, f"{string}{bank}")
+        if abs(pack_current) < LOAD_SPREAD_MIN_A or len(cells_mv) < 2:
             return
         i_string = abs(pack_current) / 2
         lo = min(range(len(cells_mv)), key=lambda j: cells_mv[j])
@@ -81,10 +110,38 @@ class LoadSpread:
         if spread > LOAD_SPREAD_WARN_MV / 2:
             self.worst_cells[cell] = self.worst_cells.get(cell, 0) + 1
 
+    def comp_findings(self, now: float) -> list:
+        fresh = {k: v for k, v in self.comp.items() if now - v[0] <= COMP_MAX_AGE_S}
+        if len(fresh) < COMP_MIN_CELLS:
+            return []
+        vals = sorted(v[1] for v in fresh.values())
+        med = vals[len(vals) // 2]
+        out = []
+        low_k = min(fresh, key=lambda k: fresh[k][1])
+        dev = fresh[low_k][1] - med
+        name = f"sträng {low_k[0]}, cell {low_k[1:]}"
+        if dev <= -COMP_CELL_WARN_MV:
+            out.append(("alarm" if dev <= -COMP_CELL_ALARM_MV else "warn", "load_comp_cell", name,
+                        f"Under last, jämfört med alla {len(fresh)} celler (kompenserat för ström och "
+                        f"cellens motstånd): {name} ligger {-dev:.0f} mV under mitten – svag cell eller dålig "
+                        f"förbindelse.", round(dev)))
+        banks: dict[str, list[float]] = {}
+        for v in fresh.values():
+            banks.setdefault(v[3], []).append(v[1])
+        for b, bv in banks.items():
+            bv.sort()
+            bdev = bv[len(bv) // 2] - med
+            if bdev <= -COMP_BANK_WARN_MV:
+                out.append(("warn", "load_comp_bank", f"sträng {b[0]}, bank {b[1:]}",
+                            f"Under last ligger hela sträng {b[0]} bank {b[1:]} {-bdev:.0f} mV under resten av "
+                            f"paketet (kompenserat) – syns inte inom banken.", round(bdev)))
+        return out
+
     def findings(self, now: float) -> list:
+        comp = self.comp_findings(now)
         rec = [r for r in self.recent if now - r["ts"] <= 10]
         if not rec:
-            return []
+            return comp
         w = max(rec, key=lambda r: r["spread_mv"])
         low = min(rec, key=lambda r: r["low_mv"])
         out = []
@@ -102,7 +159,7 @@ class LoadSpread:
             out.append((lvl, "load_spread", w["cell"],
                         f"Cellspridning under last {w['spread_mv']} mV vid {w['i_string'] * 2:.0f} A{norm} – "
                         f"lägst: {w['cell']}.", w["spread_mv"]))
-        return out
+        return out + comp
 
 
 @dataclass

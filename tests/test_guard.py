@@ -164,3 +164,44 @@ def test_no_load_no_check():
     ls = LoadSpread()
     ls.add(0, "A", 0, [4000] * 7 + [3800], 1.0)          # standing still
     assert ls.findings(0) == []
+
+
+def _pack_round(ls, t0, currents, weak=None, weak_bank=None, r_mohm=3.0):
+    """Six banks sampled 0.3 s apart at different currents, like the wheel."""
+    t = t0
+    for n, (s, b) in enumerate([(s, b) for s in "AB" for b in range(3)]):
+        i = currents[n % len(currents)]
+        cells = []
+        for j in range(8):
+            key = f"{s}{b * 8 + j + 1}"
+            mv = 4000 - r_mohm * i / 2
+            if key == weak:
+                mv -= 70
+            if weak_bank == f"{s}{b}":
+                mv -= 45
+            cells.append(round(mv))
+        ls.add(t, s, b, cells, i, r_lookup=lambda k: r_mohm)
+        t += 0.3
+    return t
+
+
+def test_compensated_whole_pack_ignores_load_differences():
+    from falcon.guard import LoadSpread
+    ls = LoadSpread(1.5)
+    t = _pack_round(ls, 0, [10, 18, 26, 34, 42, 50])      # very different currents per bank
+    assert [f for f in ls.comp_findings(t) if f[0] in ("warn", "alarm")] == []
+
+
+def test_compensated_finds_weak_cell_across_banks():
+    from falcon.guard import LoadSpread
+    ls = LoadSpread(1.5)
+    t = _pack_round(ls, 0, [30, 30, 30, 30, 30, 30], weak="B17")
+    f = ls.comp_findings(t)
+    assert f and f[0][1] == "load_comp_cell" and "cell 17" in f[0][2] and f[0][0] == "warn"
+
+
+def test_compensated_finds_weak_bank():
+    from falcon.guard import LoadSpread
+    ls = LoadSpread(1.5)
+    t = _pack_round(ls, 0, [30, 30, 30, 30, 30, 30], weak_bank="A1")
+    assert any(f[1] == "load_comp_bank" and "bank 1" in f[2] for f in ls.comp_findings(t))

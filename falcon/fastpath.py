@@ -101,6 +101,11 @@ class CellRegression:
             if current_a is not None:
                 f.add(ts, current_a, mv)
 
+    def resistance(self, key: str) -> float | None:
+        f = self.fits.get(key)
+        r = f.result() if f else None
+        return r["mohm"] if r and r["mohm"] > 0 else None
+
     def report(self, now: float | None = None) -> dict:
         now = time.time() if now is None else now
         cells = {}
