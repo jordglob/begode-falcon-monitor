@@ -107,3 +107,14 @@ class Store:
 
     def gps_count(self) -> int:
         return self.db.execute("SELECT count(*) FROM gps_samples").fetchone()[0]
+
+    def history_bucketed(self, hours: float, points: int = 1500) -> list[dict]:
+        """Averages per time bucket so any range returns ~`points` rows (5 s minimum)."""
+        bucket = max(5.0, hours * 3600 / points)
+        cols = ["voltage_v", "current_a", "speed_kmh", "cell_min_mv", "cell_max_mv", "cell_spread_mv",
+                "temp1_c", "temp2_c", "board_temp_c", "motor_temp_c", "sag_mohm"]
+        agg = ", ".join(f"avg({c})" if c != "speed_kmh" else "max(speed_kmh)" for c in cols)
+        cur = self.db.execute(
+            f"SELECT avg(ts), {agg} FROM samples WHERE ts > ? GROUP BY CAST(ts / ? AS INTEGER) ORDER BY 1",
+            (time.time() - hours * 3600, bucket))
+        return [dict(zip(["ts"] + cols, r)) for r in cur.fetchall()]

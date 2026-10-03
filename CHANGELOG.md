@@ -2,6 +2,27 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.12.0 – 2026-10-03
+- **Speed plausibility**: wheel speed vs GPS speed (only where the GPS fix is good: ≥5
+  satellites, HDOP ≤2.5). *Spin* = the wheel turns clearly faster than the GPS moves (lifted,
+  slipping); *carried* = GPS moves while the wheel stands still. Shown live, per ride and as
+  dashed overlays on the map. Spinning points no longer set a ride's max speed.
+- **Safety margin** (100 % − PWM) with a 3 s PWM forecast; **alarms** for PWM, speed, motor and
+  board temperature, battery and lowest cell – banner, browser beep and event log; limits
+  editable from the server computer.
+- **Release the link** for 15 min / 1 h so the phone app can connect; "Ta tillbaka" resumes.
+- **Charge limit via smart plug** (Shelly Gen1/Gen2, `FALCON_PLUG_URL`, `FALCON_PLUG_TYPE`):
+  stops charging at a chosen average cell voltage (default 4.10 V); fail-safe leaves the plug
+  alone when data stops.
+- **Export**: rides as GPX 1.1 and CSV (with wheel/GPS speed and plausibility), telemetry as CSV.
+- **Grafer** tab: voltage, current, cell spread, cell min/max, temperatures, sag and speed over
+  1 h – 30 days (uPlot, vendored, MIT), downsampled server-side; one measure per chart.
+- Deep links for every tab (`#graphs`, `#health`, …).
+- `bluetoothctl` helpers are killed if they outlive their timeout and never read stdin
+  (an unknown device could hang them forever).
+- `docs/research/`: competing-apps comparison and protocol notes.
+- Dry run extended: demo rides include a spinning section, demo telemetry for the graphs.
+
 ## 0.11.0 – 2026-10-03
 - **Rides on a map**: rides are cut from the stored GPS points (gap > 2 min or 3 min without
   movement ends a ride; needs ≥30 s moving above 3 km/h and ≥100 m). List with distance, time

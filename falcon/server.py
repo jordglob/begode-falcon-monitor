@@ -16,6 +16,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from .ble import WheelLink
 from .energy import energy_view
@@ -28,6 +29,11 @@ from .verify import Verifier
 from .backup import Backups, RESTORABLE
 from .gps import GpsReader
 from . import rides as rides_mod
+from . import export as export_mod
+from .alarms import RideAlarms
+from .charging import ChargeController, Plug
+from .health import wheel_percent
+from fastapi.responses import PlainTextResponse
 from .protocol import ascii_replies
 from .protocol import FIELD_INFO, UNCERTAIN, decode_p0, decode_p1, decode_p4, decode_p7, Frame
 import json
@@ -87,6 +93,9 @@ def _on_gps_fix(s: dict) -> None:
 
 
 gps.on_fix = _on_gps_fix
+alarms = RideAlarms(store.get_json("alarm_config"))
+charger = ChargeController(Plug(os.environ.get("FALCON_PLUG_URL"), os.environ.get("FALCON_PLUG_TYPE", "shelly2")),
+                           store.get_json("charge_config"), on_event=lambda m: log_event(m))
 backups = Backups(Path(os.environ.get("FALCON_BACKUPS",
                                       Path.home() / ".local/share/begode-falcon/backups")))
 guard = Guard(store.get_json("guard_baseline"))
@@ -144,6 +153,19 @@ async def guard_loop() -> None:
         await asyncio.sleep(1)
         fresh = link.connected and state.groups and time.time() - link.last_frame_ts < 5
         try:
+            snap_now = state.snapshot()
+            charger.tick(snap_now, bool(fresh))
+            if fresh:
+                before = {(a.code, a.level) for a in alarms.active}
+                found = alarms.update(snap_now, wheel_percent((state.p0 or {}).get("voltage_raw")))
+                for a in found:
+                    if (a.code, a.level) not in before:
+                        log_event(f"{'⛔' if a.level == 'alarm' else '⚠️'} {a.text}")
+                if found:
+                    _publish({"alarms": [a.__dict__ for a in found]})
+        except Exception as e:
+            log_event(f"Larm/laddning: fel {e}")
+        try:
             health.tick(time.time(), state.snapshot() if fresh else None, bool(fresh))
         except Exception as e:  # health must never stop the guard
             log_event(f"Batterihälsa: fel {e}")
@@ -178,6 +200,7 @@ async def lifespan(_app):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/vendor", StaticFiles(directory=ROOT / "web" / "vendor"), name="vendor")
 
 
 @app.get("/")
@@ -452,7 +475,14 @@ def api_gps():
     if not GPS_ON:
         return {"status": "avstängd (FALCON_GPS=0)", "fix": False, "state": {}, "satellites": [],
                 "stats": {}, "stored_points": 0}
-    return {**gps.report(), "stored_points": store.gps_count()}
+    rep = gps.report()
+    fresh = link.connected and time.time() - link.last_frame_ts < 3
+    w = (state.p0 or {}).get("speed_kmh") if fresh else None
+    st = rep.get("state") or {}
+    live = {"wheel_speed_kmh": w, "speed_kmh": st.get("speed_kmh"), "sats": st.get("sats_used"),
+            "hdop": st.get("hdop")}
+    return {**rep, "stored_points": store.gps_count(),
+            "plausibility_now": {**live, "flag": rides_mod.plausibility(live) if rep.get("fix") else None}}
 
 
 @app.get("/api/rides")
@@ -461,7 +491,7 @@ def api_rides(days: float = 90):
     return {"rides": [rides_mod.summary(r) for r in reversed(rides_mod.segment(pts))]}
 
 
-@app.get("/api/rides/{ride_id}")
+@app.get("/api/rides/{ride_id:int}")
 def api_ride(ride_id: int):
     pts = rides_mod.load_points(store.db, ride_id - 1)
     for r in rides_mod.segment(pts):
@@ -470,9 +500,104 @@ def api_ride(ride_id: int):
     return _err(Exception("turen finns inte"), 404)
 
 
+@app.post("/api/link/release")
+async def api_link_release(req: Request):
+    """Free the wheel for the phone app (allowed from any device – it only disconnects)."""
+    body = await req.json() if (await req.body()) else {}
+    minutes = max(1, min(int(body.get("minutes", 15)), 240))
+    link.release(minutes * 60)
+    return {"ok": True, "minutes": minutes}
+
+
+@app.post("/api/link/resume")
+def api_link_resume():
+    link.resume()
+    return {"ok": True}
+
+
+@app.get("/api/alarms")
+def api_alarms():
+    return alarms.report()
+
+
+@app.post("/api/alarms/config")
+async def api_alarms_config(req: Request):
+    if not gate.is_local(_host(req)):
+        return _err(Exception("larmgränser ändras bara från datorn som kör servern"))
+    body = await req.json()
+    for k, v in body.items():
+        if k in alarms.cfg:
+            alarms.cfg[k] = None if v in (None, "") else float(v)
+    store.set_json("alarm_config", alarms.cfg)
+    return {"ok": True, "config": alarms.cfg}
+
+
+@app.get("/api/charge")
+def api_charge():
+    return {**charger.report(), "plug_on": charger.plug.state()}
+
+
+@app.post("/api/charge/config")
+async def api_charge_config(req: Request):
+    if not gate.is_local(_host(req)):
+        return _err(Exception("laddningsstyrning ändras bara från datorn som kör servern"))
+    body = await req.json()
+    if "enabled" in body:
+        charger.enabled = bool(body["enabled"])
+    if "target_cell_v" in body:
+        v = float(body["target_cell_v"])
+        if not 3.80 <= v <= 4.20:
+            return _err(Exception("gränsen måste vara 3,80–4,20 V per cell"), 400)
+        charger.target_cell_v = v
+    store.set_json("charge_config", charger.config())
+    log_event(f"🔌 Laddningsgräns: {'på' if charger.enabled else 'av'}, {charger.target_cell_v:.2f} V/cell")
+    return {"ok": True, **charger.config()}
+
+
+@app.post("/api/charge/plug")
+async def api_charge_plug(req: Request):
+    body = await req.json()
+    on = bool(body.get("on"))
+    if on and not gate.is_local(_host(req)):
+        return _err(Exception("kontakten slås på bara från datorn som kör servern"))
+    try:
+        charger.plug.set(on)
+    except Exception as e:
+        return _err(e, 409)
+    log_event(f"🔌 Kontakten {'på' if on else 'av'} (manuellt)")
+    return {"ok": True}
+
+
+@app.get("/api/rides/{ride_id}.gpx")
+def api_ride_gpx(ride_id: int):
+    r = api_ride(ride_id)
+    if not isinstance(r, dict):
+        return r
+    name = "falcon-" + time.strftime("%Y%m%d-%H%M", time.localtime(r["start"]))
+    return PlainTextResponse(export_mod.ride_gpx(r, r["track"], name), media_type="application/gpx+xml",
+                             headers={"Content-Disposition": f'attachment; filename="{name}.gpx"'})
+
+
+@app.get("/api/rides/{ride_id}.csv")
+def api_ride_csv(ride_id: int):
+    r = api_ride(ride_id)
+    if not isinstance(r, dict):
+        return r
+    name = "falcon-" + time.strftime("%Y%m%d-%H%M", time.localtime(r["start"]))
+    return PlainTextResponse(export_mod.ride_csv(r["track"]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="{name}.csv"'})
+
+
+@app.get("/api/export/samples.csv")
+def api_export_samples(hours: float = 24):
+    rows = store.history(hours, limit=200000)
+    return PlainTextResponse(export_mod.samples_csv(rows), media_type="text/csv",
+                             headers={"Content-Disposition": 'attachment; filename="falcon-telemetri.csv"'})
+
+
 @app.get("/api/history")
 def api_history(hours: float = 24):
-    return store.history(hours)
+    return store.history_bucketed(min(hours, 24 * 366))
 
 
 @app.get("/api/log")

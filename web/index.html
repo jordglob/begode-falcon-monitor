@@ -35,12 +35,16 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
 <span id="sig" style="font-size:13px;color:var(--mut)"></span>
 <span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="log">Logg</button></nav>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
+  <div class="card" id="alarmbar" style="display:none"></div>
+  <div class="card"><h2>Säkerhetsmarginal</h2><div class="grid" id="margin"></div>
+    <div class="note">Marginal = 100 % − PWM: hur mycket motorkraft som finns kvar. Vid 100 % PWM kan hjulet inte längre hålla upp dig. Prognosen räknar 3 s framåt från de senaste 3 sekunderna.</div></div>
   <div class="card"><h2>Färd</h2><div class="grid" id="ride"></div></div>
   <div class="card"><h2>Inställningar som hjulet rapporterar (paket 4)</h2><div class="grid" id="settings"></div>
   <div class="note">Det här är värden som hjulet själv skickar, och de används senare för verifiering. Inget kan ändras här ännu.</div></div>
+  <div class="card"><h2>Larmgränser</h2><table id="alarmcfg"></table><div class="note" id="alarmcfgnote">Ändras bara från X230. Larm visas överst, piper i webbläsaren och loggas.</div></div>
 </section>
 <section id="energy">
   <div class="card" id="guardcard"><h2>Obalansvakt</h2><div id="gstatus" style="font-size:20px">—</div>
@@ -55,6 +59,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 </section>
 <section id="health">
   <div class="card"><h2>Kapacitet och hälsa</h2><div class="grid" id="hcap"></div><div class="note" id="hcapnote"></div></div>
+  <div class="card"><h2>Laddningsgräns via smart kontakt</h2><div class="grid" id="chg"></div><div id="chgbtn" style="margin-top:8px"></div>
+    <div class="note">Stoppar laddningen när medelcellen når gränsen (4,10 V ≈ 90 %) – skonar batteriet. Kräver en Shelly-kontakt (FALCON_PLUG_URL). Om data från hjulet försvinner lämnas kontakten orörd; laddaren stänger då själv vid fullt.</div></div>
+  <div class="card"><h2>Export</h2><a class="btn" href="/api/export/samples.csv?hours=24" download>Telemetri 24 h (CSV)</a> <a class="btn" href="/api/export/samples.csv?hours=168" download>7 dygn (CSV)</a> <a class="btn" href="/api/export/samples.csv?hours=8760" download>Allt (CSV)</a></div>
   <div class="card"><h2>Energiräknare (när X230 ser hjulet)</h2><div class="grid" id="hcnt"></div></div>
   <div class="card"><h2>Hjulets egen mätare jämfört med vår</h2><div class="grid" id="hgauge"></div></div>
   <div class="card"><h2>Kapacitetsmätningar</h2><table id="hpts"></table></div>
@@ -71,7 +78,11 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
     <div id="ridelegend" class="note" style="margin-top:6px"></div><div id="ridestats" class="grid" style="margin-top:8px"></div></div>
   <div class="card"><h2>Satelliter</h2><table id="gpssats"></table></div>
   <div class="card"><h2>Statistik</h2><div class="grid" id="gpsstats"></div>
-    <div class="note">Positioner sparas var 5:e sekund tillsammans med hjulets egen fart – underlaget för turer på karta med färgskala för farten (kommer).</div></div>
+    <div class="note">Positioner sparas var 5:e sekund tillsammans med hjulets egen fart – det blir turerna på kartan ovan.</div></div>
+</section>
+<section id="graphs">
+  <div class="card"><h2>Grafer</h2><div id="grange"></div><div class="note">Historik sparad var 5:e sekund när hjulet är anslutet. Håll musen över en graf för värden; dra för att zooma, dubbelklicka för att återställa.</div></div>
+  <div id="gcharts"></div>
 </section>
 <section id="all"><div class="card"><h2>Versioner</h2><div class="grid" id="versions"></div></div>
   <div class="note" style="margin:8px 0">Status: ✅ rimligt/bekräftat · ⚠️ skala från en källa, ej bekräftad under last · ❓ betydelse oklar. Uppdateras varje sekund.</div>
@@ -88,6 +99,8 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
   <div class="card"><h2>Kommandologg</h2><table id="ctllog"></table></div>
 </section>
 <section id="log"><div class="card"><h2>Händelser</h2><table id="events"></table></div>
+  <div class="card"><h2>Släpp hjulet till mobilappen</h2><div id="relbtns"></div>
+    <div class="note">Hjulet tar bara en Bluetooth-anslutning. Släpp den en stund för att använda Begode-appen; servern tar tillbaka hjulet när tiden gått ut eller när du trycker "Ta tillbaka".</div></div>
   <div class="card"><h2>Anslutningens stabilitet</h2><div class="grid" id="stab"></div><table id="drops"></table></div>
   <div class="card"><h2>Länk</h2><div id="link"></div></div></section>
 </main>
@@ -97,7 +110,7 @@ const fmt=(v,d=1,u='')=>v==null||Number.isNaN(v)?'—':(typeof v==='number'?v.to
 const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('act'));
-  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}
+  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);
   try{localStorage.setItem('tab',b.dataset.t)}catch(e){}});
 try{const t=localStorage.getItem('tab');if(t)document.querySelector(`nav button[data-t=${t}]`)?.click()}catch(e){}
 
@@ -139,7 +152,7 @@ async function tick(){
     $('elec').innerHTML=kv('Moderkort',fmt(X.board_temp_c,1,'°C'))+kv('Motor',fmt(X.motor_temp_c,0,'°C'))
       +kv('Fasström (paket 0)',fmt(X.phase_current_a,2,'A'))+kv('Batteriström (paket 7)',fmt(X.battery_current_p7_a,2,'A'))
       +kv('PWM',fmt(X.pwm_pct,0,'%'));
-    const T=L.stability||{};
+    reltick(L);const T=L.stability||{};
     $('stab').innerHTML=kv('Ansluten i',T.connected_for_s!=null?(T.connected_for_s>=3600?fmt(T.connected_for_s/3600,1,'h'):fmt(T.connected_for_s/60,1,'min')):'—')
       +kv('Anslutningar',fmt(T.connects,0))+kv('Andel tid med data',fmt(T.data_pct,1,'%'))
       +kv('Senaste avbrott',T.last_drop?new Date(T.last_drop.ts*1000).toLocaleTimeString('sv-SE'):'inga');
@@ -192,7 +205,7 @@ function renderBus(b){if(!b||b.bus_v==null)return;
     +kv('Hälsoindex (gissat)',b.index_guess!=null?fmt(b.index_guess,0):'<span style="font-size:14px">kräver referens (körning)</span>')
     +kv('Tomgångsspänning (skattad)',fmt(S.ocv_v,2,'V'));
   $('busrate').textContent=`Live via push: ${(busN/((Date.now()-busT0)/1000)).toFixed(1)} uppdateringar/s (hjulet skickar max ~3,3/s).`;}
-try{const es=new EventSource('/api/stream');es.onmessage=e=>{try{renderBus(JSON.parse(e.data).bus)}catch(x){}}}catch(e){}
+try{const es=new EventSource('/api/stream');es.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.bus)renderBus(m.bus);if(m.alarms)renderAlarms(m.alarms)}catch(x){}}}catch(e){}
 async function cellstick(){try{const c=await fetch('/api/cells_fast').then(r=>r.json());
   const ks=Object.keys(c.cells).sort((a,b)=>a.localeCompare(b,'sv',{numeric:true}));
   $('cfast').innerHTML=ks.length?`<div class="cells">${ks.map(k=>{const x=c.cells[k];return `<div class="cell ${c.flag.includes(k)?'lo':''}" title="${k}: ${x.n?('n='+x.n+', strömspridning '+x.i_std+' A'):'för lite strömvariation'}">${k}<br>${(x.mv/1000).toFixed(3)}<br><span style="color:var(--mut)">${x.age_s}s</span><br>${x.mohm!=null?x.mohm.toFixed(1)+' mΩ':'–'}</div>`}).join('')}</div>`
@@ -267,6 +280,9 @@ async function gpstick(){try{if(!$('pos').classList.contains('act'))return;const
     +kv('Noggrannhet (grov)',g.accuracy_m_guess!=null?'± '+g.accuracy_m_guess+' m':'—')+kv('Satelliter använda / synliga',`${s.sats_used??'—'} / ${s.sats_in_view??'—'}`)
     +kv('HDOP / PDOP',`${fmt(s.hdop,1)} / ${fmt(s.pdop,1)}`)+kv('Fart (GPS)',fmt(s.speed_kmh,1,'km/h'))+kv('Kurs',fmt(s.course_deg,0,'°'))
     +kv('Höjd',fmt(s.alt_m,0,'m'))+kv('Tid (UTC)',s.utc?new Date(s.utc).toLocaleString('sv-SE'):'—');
+  const P=g.plausibility_now||{},PF={ok:'<span class="ok">✅ stämmer</span>',spin:'<span class="bad">⚠️ hjulet snurrar fortare än GPS</span>',carried:'<span class="warn">⚠️ GPS rör sig, hjulet står</span>'};
+  $('gpsmain').innerHTML+=kv('Hjulets fart / GPS',`${fmt(P.wheel_speed_kmh,1)} / ${fmt(P.speed_kmh,1)} km/h`)
+    +kv('Fartrimlighet',PF[P.flag]||'<span style="font-size:14px">kan ej bedömas (hjul eller GPS saknas/svag)</span>');
   $('gpsnote').textContent=(g.source?'Källa: '+g.source+'. ':'')+(s.rollover_corrected?`Mottagaren rapporterar datumet ${s.raw_date} (fel med exakt 1024 veckor – GPS-veckoräknaren har slagit runt); rättat automatiskt.`:'');
   $('gpssats').innerHTML='<tr><td>PRN</td><td>Höjd</td><td>Riktning</td><td>Signal (SNR)</td></tr>'+(g.satellites||[]).map(x=>`<tr><td>${x.prn}</td><td>${fmt(x.elev,0,'°')}</td><td>${fmt(x.azim,0,'°')}</td>
     <td>${x.snr!=null?`<span class="${x.snr>=35?'ok':x.snr>=25?'warn':'bad'}">${x.snr} dB</span>`:'<span class="note">ej spårad</span>'}</td></tr>`).join('');
@@ -282,10 +298,11 @@ function loadLeaflet(){return new Promise((ok,bad)=>{if(window.L)return ok();
 const dur=s=>s>=3600?`${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min`:`${Math.round(s/60)} min`;
 async function ridestick(force){try{if(!$('pos').classList.contains('act'))return;if(!force&&Date.now()-ridesLoaded<30000)return;ridesLoaded=Date.now();
   const r=await fetch('/api/rides').then(r=>r.json());
-  $('ridelist').innerHTML=r.rides.length?'<tr><td>Start</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Hjulets fart</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
+  $('ridelist').innerHTML=r.rides.length?'<tr><td>Start</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Hjulets fart</td><td>Fartrimlighet</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
     <td>${new Date(x.start*1000).toLocaleString('sv-SE',{dateStyle:'short',timeStyle:'short'})}</td><td>${fmt(x.distance_km,2,'km')}</td><td>${dur(x.moving_s)}</td>
     <td>${fmt(x.max_kmh,0,'km/h')}</td><td>${fmt(x.avg_moving_kmh,0,'km/h')}</td><td class="note">${x.wheel_speed_share_pct} % av punkterna</td>
-    <td><button class="btn" onclick="showRide(${x.id})">Visa på karta</button></td></tr>`).join('')
+    <td>${x.spin_s||x.carried_s?`<span class="warn">${x.spin_s?'⚠️ snurrar '+x.spin_s+' s ':''}${x.carried_s?'⚠️ bärs '+x.carried_s+' s':''}</span>`:(x.checked_share_pct?`<span class="ok">✅</span> <span class="note">${x.checked_share_pct} % kontrollerat</span>`:'<span class="note">kan ej bedömas</span>')}</td>
+    <td><button class="btn" onclick="showRide(${x.id})">Visa på karta</button> <a class="note" href="/api/rides/${x.id}.gpx" download>GPX</a> · <a class="note" href="/api/rides/${x.id}.csv" download>CSV</a></td></tr>`).join('')
     :'<tr><td class="note">Inga turer ännu. En tur sparas när GPS:en rör sig minst 30 s över 3 km/h och minst 100 m.</td></tr>';
 }catch(e){}}
 async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(null,'','#ride='+id)}catch(e){}
@@ -300,21 +317,101 @@ async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(
   for(let i=1;i<T.length;i++){const a=T[i-1],b=T[i],v=b[2];
     L.polyline([[a[0],a[1]],[b[0],b[1]]],{color:col(v),weight:6,opacity:1,lineCap:'round'})
      .bindTooltip(`${v!=null?v.toFixed(1)+' km/h':'—'} · ${new Date(b[3]*1000).toLocaleTimeString('sv-SE')}`,{sticky:true}).addTo(LLAYER)}
+  // speed plausibility: dashed overlay where wheel and GPS disagree
+  const PL={spin:{c:'#d95926',t:'Hjulet snurrar fortare än GPS:en rör sig (lyft, slirar)'},carried:{c:'#9085e9',t:'GPS:en rör sig men hjulet står (bärs, i bil)'}};
+  for(let i=1;i<T.length;i++){const a=T[i-1],b=T[i],f=b[4];if(PL[f])
+    L.polyline([[a[0],a[1]],[b[0],b[1]]],{color:PL[f].c,weight:12,opacity:.55,dashArray:'6 6'})
+     .bindTooltip(`${PL[f].t}<br>hjul ${b[5]??'—'} km/h · GPS ${b[6]??'—'} km/h · ${new Date(b[3]*1000).toLocaleTimeString('sv-SE')}`,{sticky:true}).addTo(LLAYER)}
   L.circleMarker([T[0][0],T[0][1]],{radius:7,color:'#fff',weight:2,fillColor:'#1d5e33',fillOpacity:1}).bindTooltip('Start').addTo(LLAYER);
   L.circleMarker([T.at(-1)[0],T.at(-1)[1]],{radius:7,color:'#fff',weight:2,fillColor:'#7a1f1a',fillOpacity:1}).bindTooltip('Mål').addTo(LLAYER);
   LMAP.invalidateSize();LMAP.fitBounds(L.latLngBounds(T.map(p=>[p[0],p[1]])),{padding:[20,20]});
   $('ridelegend').innerHTML='Fart: '+RAMP.map((c,i)=>`<span style="display:inline-block;width:26px;height:10px;background:${c};vertical-align:middle"></span>`).join('')
-    +` &nbsp;0 → ${vmax.toFixed(0)} km/h (ljus = långsamt, mörk = snabbt). Håll musen över spåret för fart och tid.`;
+    +` &nbsp;0 → ${vmax.toFixed(0)} km/h (ljus = långsamt, mörk = snabbt). Håll musen över spåret för fart och tid.`
+    +`<br>Fartrimlighet: <span style="display:inline-block;width:26px;height:6px;border-top:4px dashed #d95926;vertical-align:middle"></span> hjulet snurrar fortare än GPS
+      &nbsp;<span style="display:inline-block;width:26px;height:6px;border-top:4px dashed #9085e9;vertical-align:middle"></span> GPS rör sig men hjulet står.
+      Kontrolleras bara där hjulets fart finns och GPS:en har ≥5 satelliter och HDOP ≤2,5.`;
   $('ridestats').innerHTML=kv('Sträcka',fmt(r.distance_km,2,'km'))+kv('Tid i rörelse',dur(r.moving_s))+kv('Total tid',dur(r.duration_s))
-    +kv('Maxfart',fmt(r.max_kmh,1,'km/h'))+kv('Snittfart i rörelse',fmt(r.avg_moving_kmh,1,'km/h'))+kv('Punkter',r.points);
+    +kv('Maxfart',fmt(r.max_kmh,1,'km/h'))+kv('Snittfart i rörelse',fmt(r.avg_moving_kmh,1,'km/h'))+kv('Punkter',r.points)
+    +kv('Hjulet snurrar fortare',r.spin_s?`<span class="warn">${r.spin_s} s</span>`:'0 s')+kv('Bärs / står still',r.carried_s?`<span class="warn">${r.carried_s} s</span>`:'0 s')
+    +kv('Kontrollerad andel',fmt(r.checked_share_pct,0,'%'));
+}
+let lastAlarmSig='',audioCtx=null;
+function beep(level){try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=level==='alarm'?1200:800;g.gain.value=.15;
+  o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+(level==='alarm'?.5:.15))}catch(e){}}
+function renderAlarms(list){const el=$('alarmbar');if(!list||!list.length){el.style.display='none';lastAlarmSig='';return}
+  const worst=list.some(a=>a.level==='alarm')?'alarm':'warn';el.style.display='block';
+  el.style.outline=`2px solid ${worst==='alarm'?'var(--bad)':'var(--warn)'}`;
+  el.innerHTML=list.map(a=>`<div style="font-size:18px" class="${a.level==='alarm'?'bad':'warn'}">${a.level==='alarm'?'⛔':'⚠️'} ${a.text}</div>`).join('');
+  const sig=list.map(a=>a.code+a.level).join();if(sig!==lastAlarmSig){beep(worst);lastAlarmSig=sig}}
+const ALBL={pwm_warn:'PWM varning (%)',pwm_alarm:'PWM larm (%)',speed_warn:'Fartvarning (km/h, tomt = av)',motor_temp_warn:'Motor varning (°C)',
+  motor_temp_alarm:'Motor larm (°C)',board_temp_warn:'Moderkort varning (°C)',board_temp_alarm:'Moderkort larm (°C)',battery_warn_pct:'Batteri varning (%)',
+  battery_alarm_pct:'Batteri larm (%)',cell_min_warn_v:'Lägsta cell varning (V)',cell_min_alarm_v:'Lägsta cell larm (V)'};
+let alarmCfgShown=false;
+async function alarmtick(){try{const a=await fetch('/api/alarms').then(r=>r.json());renderAlarms(a.active);
+  const m=a.safety_margin_pct;
+  $('margin').innerHTML=kv('Säkerhetsmarginal',m!=null?`<span class="${m<=20?'bad':m<=30?'warn':'ok'}">${m.toFixed(0)} %</span>`:'—')
+    +kv('PWM nu',fmt(a.pwm,0,'%'))+kv('PWM om 3 s (prognos)',fmt(a.predicted_pwm_3s,0,'%'));
+  if(!alarmCfgShown||!$('alarmcfg').contains(document.activeElement)){alarmCfgShown=true;
+    $('alarmcfg').innerHTML=Object.entries(ALBL).map(([k,l])=>`<tr><td>${l}</td><td><input id="al_${k}" value="${a.config[k]??''}" style="width:80px"></td></tr>`).join('')
+      +'<tr><td></td><td><button class="btn go" onclick="alarmSave()">Spara</button></td></tr>'}}catch(e){}}
+async function alarmSave(){const b={};Object.keys(ALBL).forEach(k=>b[k]=$('al_'+k).value);const r=await post('/api/alarms/config',b);
+  $('alarmcfgnote').textContent=r.ok?'✅ sparat':'⛔ '+r.error;alarmCfgShown=false;alarmtick()}
+async function chgtick(){try{const c=await fetch('/api/charge').then(r=>r.json());
+  $('chg').innerHTML=kv('Laddningsgräns',c.enabled?`<span class="ok">på</span>`:'av')+kv('Gräns',fmt(c.target_cell_v,2,'V/cell'))
+    +kv('Medelcell nu',fmt(c.mean_cell_v,3,'V'))+kv('Laddar',c.charging?'ja':'nej')
+    +kv('Kontakt',!c.plug_configured?'<span style="font-size:14px">ingen konfigurerad</span>':c.plug_on==null?'?':c.plug_on?'på':'av')
+    +kv('Senaste stopp',c.last_action?new Date(c.last_action.ts*1000).toLocaleString('sv-SE')+' vid '+c.last_action.mean_cell_v+' V':'—');
+  $('chgbtn').innerHTML=`<button class="btn" onclick="chgSet({enabled:${!c.enabled}})">${c.enabled?'Stäng av gränsen':'Slå på gränsen'}</button>
+    Gräns <input id="chgv" value="${c.target_cell_v}" style="width:60px"> V <button class="btn" onclick="chgSet({target_cell_v:+$('chgv').value})">Spara</button>
+    <button class="btn" ${c.plug_configured?'':'disabled'} onclick="post('/api/charge/plug',{on:true}).then(chgtick)">Kontakt på</button>
+    <button class="btn" ${c.plug_configured?'':'disabled'} onclick="post('/api/charge/plug',{on:false}).then(chgtick)">Kontakt av</button>`;}catch(e){}}
+async function chgSet(b){const r=await post('/api/charge/config',b);if(!r.ok)$('chgbtn').insertAdjacentHTML('beforeend',' <span class="bad">⛔ '+r.error+'</span>');else chgtick()}
+function reltick(L){const p=L.paused_until;$('relbtns').innerHTML=p?`<span class="warn">Släppt till ${new Date(p*1000).toLocaleTimeString('sv-SE')}</span> <button class="btn" onclick="post('/api/link/resume').then(tick)">Ta tillbaka</button>`
+  :`<button class="btn" onclick="post('/api/link/release',{minutes:15}).then(tick)">Släpp i 15 min</button> <button class="btn" onclick="post('/api/link/release',{minutes:60}).then(tick)">Släpp i 1 h</button>`}
+// ---------- history charts (uPlot, vendored). One measure per chart: no dual axes.
+const GDEF=[
+  {k:'voltage_v',t:'Batterispänning',u:'V',c:['#3987e5']},
+  {k:'current_a',t:'Batteriström',u:'A',c:['#3987e5']},
+  {k:'cell_spread_mv',t:'Cellspridning (max − min)',u:'mV',c:['#3987e5']},
+  {k:['cell_min_mv','cell_max_mv'],n:['Lägsta cell','Högsta cell'],t:'Cellspänning min / max',u:'mV',c:['#3987e5','#d95926']},
+  {k:['temp1_c','temp2_c','board_temp_c','motor_temp_c'],n:['Batteri (min)','Batteri (max)','Moderkort','Motor'],t:'Temperaturer',u:'°C',c:['#3987e5','#d95926','#199e70','#c98500']},
+  {k:'sag_mohm',t:'Spänningsfall per ampere (gissat)',u:'mΩ',c:['#3987e5']},
+  {k:'speed_kmh',t:'Fart',u:'km/h',c:['#3987e5']},
+];
+let GH=24,gplots=[],gLoaded=0;
+function loadUplot(){return new Promise((ok,bad)=>{if(window.uPlot)return ok();
+  const c=document.createElement('link');c.rel='stylesheet';c.href='/vendor/uPlot.min.css';document.head.appendChild(c);
+  const j=document.createElement('script');j.src='/vendor/uPlot.iife.min.js';j.onload=ok;j.onerror=bad;document.head.appendChild(j)})}
+async function graphtick(force){if(!$('graphs').classList.contains('act'))return;if(!force&&Date.now()-gLoaded<30000)return;gLoaded=Date.now();
+  $('grange').innerHTML=[[1,'1 h'],[6,'6 h'],[24,'24 h'],[168,'7 dygn'],[720,'30 dygn']].map(([h,l])=>`<button class="btn ${h===GH?'go':''}" onclick="GH=${h};graphtick(true)">${l}</button>`).join('');
+  try{await loadUplot()}catch(e){$('gcharts').innerHTML='<div class="note">Kunde inte ladda grafbiblioteket.</div>';return}
+  const rows=await fetch('/api/history?hours='+GH).then(r=>r.json());
+  gplots.forEach(p=>p.destroy());gplots=[];$('gcharts').innerHTML='';
+  if(!rows.length){$('gcharts').innerHTML='<div class="card note">Ingen historik i valt intervall.</div>';return}
+  const xs=rows.map(r=>r.ts),w=Math.min(860,$('graphs').clientWidth-40);
+  const css=getComputedStyle(document.documentElement),ink=css.getPropertyValue('--mut').trim()||'#9aa0a6';
+  for(const d of GDEF){const keys=Array.isArray(d.k)?d.k:[d.k];
+    const ys=keys.map(k=>rows.map(r=>r[k]==null?null:+r[k]));if(ys.every(a=>a.every(v=>v==null)))continue;
+    const card=document.createElement('div');card.className='card';card.innerHTML=`<h2>${d.t} (${d.u})</h2>`;$('gcharts').appendChild(card);
+    const opts={width:w,height:200,cursor:{drag:{x:true,y:false}},legend:{show:keys.length>1},
+      scales:{x:{time:true}},
+      axes:[{stroke:ink,grid:{stroke:'#2a2f3a',width:1},ticks:{stroke:'#2a2f3a'},
+        values:(u,sp)=>sp.map(v=>{const d=new Date(v*1000);return GH>48?d.toLocaleDateString('sv-SE',{day:'numeric',month:'short'})+(GH<=168?' '+d.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'}):'')
+          :d.toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'})})},{stroke:ink,grid:{stroke:'#2a2f3a',width:1},ticks:{stroke:'#2a2f3a'},size:56}],
+      series:[{value:(u,v)=>v==null?'—':new Date(v*1000).toLocaleString('sv-SE')},
+        ...keys.map((k,i)=>({label:d.n?d.n[i]:d.t,stroke:d.c[i],width:2,spanGaps:false,points:{show:false},
+          value:(u,v)=>v==null?'—':v.toFixed(d.u==='V'?2:d.u==='A'?1:0)+' '+d.u}))]};
+    gplots.push(new uPlot(opts,[xs,...ys],card))}
 }
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
 tick();logtick();
 // deep links: #pos opens the tab, #ride=<id> opens a ride on the map
 (()=>{const h=location.hash;const m=h.match(/ride=(\d+)/);
-  if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m)setTimeout(()=>showRide(+m[1]),300)}})();
-guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);gpstick();setInterval(gpstick,2000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
+  if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m)setTimeout(()=>showRide(+m[1]),300)}
+  else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
+guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

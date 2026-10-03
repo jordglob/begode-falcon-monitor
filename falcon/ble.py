@@ -30,28 +30,34 @@ log = logging.getLogger("falcon.ble")
 NAME_PREFIXES = ("GotWay", "Begode", "BEGODE")
 
 
+async def _run_bounded(cmd: list[str], timeout: float) -> None:
+    """Run a helper command; kill it if it outlives the timeout (bluetoothctl can wait
+    forever, e.g. for an unknown device), so no orphan process is left behind."""
+    p = None
+    try:
+        p = await asyncio.create_subprocess_exec(*cmd, stdin=asyncio.subprocess.DEVNULL,
+                                                 stdout=asyncio.subprocess.DEVNULL,
+                                                 stderr=asyncio.subprocess.DEVNULL)
+        await asyncio.wait_for(p.wait(), timeout)
+    except BaseException:
+        if p is not None and p.returncode is None:
+            try:
+                p.kill()
+                await asyncio.wait_for(p.wait(), 2)
+            except BaseException:
+                pass
+
+
 async def bluez_disconnect(address: str) -> None:
     """Drop a (possibly half-open) BlueZ connection to the wheel."""
-    try:
-        p = await asyncio.create_subprocess_exec(
-            "bluetoothctl", "disconnect", address,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        await asyncio.wait_for(p.wait(), 5)
-    except Exception:
-        pass
+    await _run_bounded(["bluetoothctl", "disconnect", address], 5)
 
 
 async def bluez_remove(address: str) -> None:
     """Last resort: make BlueZ forget the wheel. Seen live: BlueZ kept the device as
     'Connected' while every disconnect failed with 'Disconnected (0x0e)' and every
     connect timed out; removing the device object cleared it."""
-    try:
-        p = await asyncio.create_subprocess_exec(
-            "bluetoothctl", "remove", address,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-        await asyncio.wait_for(p.wait(), 8)
-    except Exception:
-        pass
+    await _run_bounded(["bluetoothctl", "remove", address], 8)
 
 
 LAST_RSSI: dict = {}     # address -> (rssi dBm, ts) from the advertisement that found it
@@ -111,6 +117,7 @@ class WheelLink:
         self.client = None
         self.notifs: deque = deque(maxlen=400)     # (ts, raw bytes) for text replies
         self.on_event = None          # callback(str) for the event log
+        self.paused_until = 0.0       # "release": stay disconnected until this time
 
     # ---------- data ----------
     def _notify(self, _h, data: bytearray) -> None:
@@ -184,6 +191,18 @@ class WheelLink:
             self.address_seen = dev.address
         return dev
 
+    def release(self, seconds: float) -> None:
+        self.paused_until = time.time() + seconds
+        self._event(f"Bluetooth: anslutningen släpps i {seconds/60:.0f} min (hjulet fritt för mobilappen)")
+
+    def resume(self) -> None:
+        self.paused_until = 0.0
+        self._event("Bluetooth: återtar anslutningen")
+
+    @property
+    def paused(self) -> bool:
+        return time.time() < self.paused_until
+
     async def _session(self, client) -> str:
         """Connect + subscribe (bounded), then watch the data flow. Returns the drop reason."""
         async def setup():
@@ -204,6 +223,8 @@ class WheelLink:
         t_sub = time.time()
         while True:
             await asyncio.sleep(self.poll_s)
+            if self.paused:
+                return "släppt för mobilappen"
             if not client.is_connected:
                 return "frånkopplad (hjulet avstängt eller utom räckhåll)"
             last = self.last_frame_ts if self.last_frame_ts > t_sub else t_sub
@@ -215,6 +236,11 @@ class WheelLink:
         backoff = self.backoff_min
         while True:
             client, address = None, self.address or self.address_seen
+            if self.paused:
+                left = self.paused_until - time.time()
+                self.status = f"släppt – hjulet fritt för mobilappen ({left/60:.0f} min kvar)"
+                await asyncio.sleep(min(2.0, max(left, 0.1)))
+                continue
             try:
                 self.status = "söker"
                 try:
@@ -234,6 +260,9 @@ class WheelLink:
                 client = self.client_factory(dev)
                 reason = await self._session(client)
                 had_data = self.connected
+                if reason == "släppt för mobilappen":
+                    await self._teardown(client, address)
+                    continue
                 self._drop(reason)
                 if had_data:
                     backoff = self.backoff_min      # it worked a while: retry fast
@@ -264,6 +293,7 @@ class WheelLink:
                 "rssi_dbm": rssi[0] if rssi else None,
                 "rssi_age_s": round(now - rssi[1]) if rssi else None,
                 "status": self.status,
+                "paused_until": self.paused_until if self.paused else None,
                 "last_frame_age_s": round(age, 1) if age is not None else None,
                 "dropped_bytes": self.asm.dropped, "device_info": self.device_info,
                 "stability": {

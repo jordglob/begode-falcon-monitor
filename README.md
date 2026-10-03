@@ -29,6 +29,7 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | `FALCON_DB` | SQLite file, default `~/.local/share/begode-falcon/history.db` |
 | `FALCON_NOMINAL_WH` | nominal capacity for comparison, default 1800 (Falcon Pro) |
 | `FALCON_BLE` | `0` runs without Bluetooth (dry runs) |
+| `FALCON_PLUG_URL`, `FALCON_PLUG_TYPE` | Shelly plug for the charge limit (`shelly2` default, or `shelly1`) |
 | `FALCON_GPS` | `0` disables GPS (default: use the first ModemManager modem with GPS) |
 | `FALCON_BACKUPS` | settings backup folder, default `~/.local/share/begode-falcon/backups` |
 
@@ -36,13 +37,14 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 
 | Tab | Content |
 |---|---|
-| Live | speed, voltage, trip, odometer, wheel alerts, settings reported by the wheel |
+| Live | **safety margin** (100 % − PWM, 3 s forecast), alarms with beep, speed, voltage, trip, odometer, wheel alerts, settings |
 | Energilager | imbalance guard, battery, cells (age + resistance per cell), BMS 1/2, bus (live via SSE, every 0.3 s), motor/electronics |
 | Batterihälsa | capacity and health, energy counters, wheel gauge vs ours, sessions, per-cell resistance, self-discharge, exposure |
-| Position & turer | GPS status, position, satellites, accuracy; **rides on a map coloured by speed** with distance, time, max/average speed |
+| Position & turer | GPS status; **rides on a map coloured by speed**, **wheel-vs-GPS speed plausibility** (spin / carried), GPX/CSV export |
 | Alla parametrar | **every decoded field of every packet** with unit, status (✅ ⚠️ ❓), raw bytes, update period |
 | Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff; **settings backup** (manual, daily, on change) with download and restore |
-| Logg | events and connection stability (connects, drops with reason, share of time with data) |
+| Grafer | voltage, current, cells, temperatures, sag, speed over 1 h – 30 days |
+| Logg | events, connection stability, **release the link** for the phone app |
 
 The header shows the app version and the signal strength (RSSI) from the last scan. Live RSSI of
 an open connection needs raw HCI access (root) and is therefore not shown.
@@ -63,6 +65,9 @@ an open connection needs raw HCI access (root) and is therefore not shown.
 | `falcon/gps.py` | NMEA parsing (GGA/RMC/GSA/GSV), week-rollover fix, ModemManager reader |
 | `falcon/rides.py` | ride segmentation, distance, speed statistics |
 | `tools/demo_ride.py` | synthetic rides for a dry run (`FALCON_BLE=0 FALCON_GPS=0`) |
+| `falcon/alarms.py` | alarms, safety margin, PWM forecast |
+| `falcon/charging.py` | charge limit via Shelly plug |
+| `falcon/export.py` | GPX / CSV export |
 | `falcon/store.py` | SQLite history |
 | `falcon/server.py` | FastAPI: `/api/state`, `/api/all`, `/api/version`, `/api/control*`, `/api/backup*`, `/api/gps`, `/api/rides`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
 | `web/index.html` | single-page UI |
@@ -127,6 +132,11 @@ Works against a real wheel at rest. Control is implemented and tested against a 
 has not yet been used on the real wheel. Current scales and a few fields will be confirmed with data
 under load and while charging. No charts yet – values are shown as numbers and tables.
 See `CHANGELOG.md`.
+
+## Research
+
+See [`docs/research/`](docs/research/): a feature comparison with other EUC apps and notes on
+the Falcon Pro BLE protocol.
 
 ## License
 

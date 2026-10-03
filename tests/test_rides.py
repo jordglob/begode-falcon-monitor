@@ -49,3 +49,25 @@ def test_demo_db_roundtrip(tmp_path):
     assert len(r) == 2
     s = rides.summary(r[0])
     assert 4 < s["distance_km"] < 6 and 30 < s["max_kmh"] <= 38      # 2 laps of ~2.5 km
+
+
+def test_plausibility_flags():
+    good = {"sats": 8, "hdop": 1.0}
+    assert rides.plausibility({**good, "wheel_speed_kmh": 25, "speed_kmh": 24}) == "ok"
+    assert rides.plausibility({**good, "wheel_speed_kmh": 40, "speed_kmh": 5}) == "spin"
+    assert rides.plausibility({**good, "wheel_speed_kmh": 0, "speed_kmh": 60}) == "carried"
+    assert rides.plausibility({"sats": 3, "hdop": 9, "wheel_speed_kmh": 40, "speed_kmh": 5}) is None
+    assert rides.plausibility({**good, "wheel_speed_kmh": None, "speed_kmh": 5}) is None
+
+
+def test_ride_summary_counts_spin_time():
+    p = pts(0, 60)
+    for x in p:
+        x.update(sats=8, hdop=1.0, wheel_speed_kmh=20.0)
+    for x in p[20:30]:
+        x["wheel_speed_kmh"] = 45.0                       # 10 points = 20 s spinning
+    s = rides.summary(rides.segment(p)[0])
+    assert s["spin_s"] == 20 and s["carried_s"] == 0
+    t = rides.track(rides.segment(p)[0])
+    assert t[25][4] == "spin" and t[5][4] == "ok"
+    assert s["max_kmh"] == 20                             # spinning (45) not counted as max
