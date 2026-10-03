@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS samples (
   sag_mohm REAL, odometer_raw INTEGER, extra TEXT
 );
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS gps_samples (ts REAL PRIMARY KEY, lat REAL, lon REAL, alt_m REAL,
+  speed_kmh REAL, course_deg REAL, sats INTEGER, hdop REAL, fix_type TEXT, wheel_speed_kmh REAL);
 CREATE TABLE IF NOT EXISTS control_log (ts REAL, host TEXT, setting TEXT, value TEXT,
   payload TEXT, status TEXT, sends INTEGER, before TEXT, after TEXT, detail TEXT, changes TEXT, reply TEXT);
 CREATE TABLE IF NOT EXISTS guard_events (ts REAL, level TEXT, code TEXT, where_ TEXT, text TEXT);
@@ -95,3 +97,13 @@ class Store:
                     pass
             out.append(d)
         return out
+
+    def add_gps(self, s: dict, wheel_speed: float | None) -> None:
+        self.db.execute("INSERT OR REPLACE INTO gps_samples VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (time.time(), s.get("lat"), s.get("lon"), s.get("alt_m"), s.get("speed_kmh"),
+                         s.get("course_deg"), s.get("sats_used"), s.get("hdop"), s.get("fix_type"),
+                         wheel_speed))
+        self.db.commit()
+
+    def gps_count(self) -> int:
+        return self.db.execute("SELECT count(*) FROM gps_samples").fetchone()[0]

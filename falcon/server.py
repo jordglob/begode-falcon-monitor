@@ -26,6 +26,7 @@ from . import __version__
 from . import control as ctl
 from .verify import Verifier
 from .backup import Backups, RESTORABLE
+from .gps import GpsReader
 from .protocol import ascii_replies
 from .protocol import FIELD_INFO, UNCERTAIN, decode_p0, decode_p1, decode_p4, decode_p7, Frame
 import json
@@ -69,6 +70,22 @@ def _on_frame(f) -> None:
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
 gate = ctl.ControlGate()          # OFF at every start
+GPS_ON = os.environ.get("FALCON_GPS", "auto") != "0"
+gps = GpsReader()
+_last_gps_store = 0.0
+
+
+def _on_gps_fix(s: dict) -> None:
+    """Store a GPS point every 5 s together with the wheel's own speed (future: rides on a map)."""
+    global _last_gps_store
+    now = time.time()
+    if now - _last_gps_store >= 5:
+        _last_gps_store = now
+        fresh = link.connected and time.time() - link.last_frame_ts < 3
+        store.add_gps(s, (state.p0 or {}).get("speed_kmh") if fresh else None)
+
+
+gps.on_fix = _on_gps_fix
 backups = Backups(Path(os.environ.get("FALCON_BACKUPS",
                                       Path.home() / ".local/share/begode-falcon/backups")))
 guard = Guard(store.get_json("guard_baseline"))
@@ -150,6 +167,7 @@ async def guard_loop() -> None:
 @asynccontextmanager
 async def lifespan(_app):
     tasks = [asyncio.create_task(link.run()), asyncio.create_task(sampler()),
+             *([asyncio.create_task(gps.run())] if GPS_ON else []),
              asyncio.create_task(guard_loop())]
     log_event("Tjänsten startad (endast läsning, inga kommandon skickas)")
     yield
@@ -425,6 +443,14 @@ async def api_backup_restore(req: Request):
     log_event(f"♻️ Återställning från {body.get('name')}: " +
               ", ".join(f"{r['field']}={r['value']} {r['status']}" for r in results))
     return {"ok": True, "results": results}
+
+
+@app.get("/api/gps")
+def api_gps():
+    if not GPS_ON:
+        return {"status": "avstängd (FALCON_GPS=0)", "fix": False, "state": {}, "satellites": [],
+                "stats": {}, "stored_points": 0}
+    return {**gps.report(), "stored_points": store.gps_count()}
 
 
 @app.get("/api/history")

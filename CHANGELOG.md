@@ -2,6 +2,14 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.10.0 – 2026-10-03
+- **Position** tab (GPS): fix type, position (OpenStreetMap link), rough accuracy, satellites
+  used/in view with signal strength, HDOP/PDOP, GPS speed, course, altitude, UTC time, time to
+  first fix. Source: ModemManager (`mmcli --location-get`), e.g. a laptop's WWAN GPS.
+- GPS week-number rollover corrected (receivers reporting dates 1024 weeks too early).
+- Positions stored every 5 s together with the wheel's own speed – groundwork for rides on a
+  map coloured by speed. `FALCON_GPS=0` disables GPS.
+
 ## 0.9.1 – 2026-10-03
 - Packet 4 word 4 is a **countdown to auto power-off** (seen live: 7200 → 0, then the wheel
   switched itself off), not a setting. Renamed `power_off_in_s`; the Live tab shows
