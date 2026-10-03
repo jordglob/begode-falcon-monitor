@@ -83,13 +83,25 @@ def segment(points: list[dict]) -> list[list[dict]]:
     return out
 
 
+MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"]
+
+
+def ride_name(ts: float) -> tuple[str, str]:
+    """('Tur 3 okt 2026 kl. 14:39', '2026-10-03-1439') – shown name and link slug."""
+    import time as _t
+    t = _t.localtime(ts)
+    return (f"Tur {t.tm_mday} {MONTHS[t.tm_mon - 1]} {t.tm_year} kl. {t.tm_hour:02d}:{t.tm_min:02d}",
+            _t.strftime("%Y-%m-%d-%H%M", t))
+
+
 def summary(r: list[dict]) -> dict:
     dist = sum(haversine_m(a["lat"], a["lon"], b["lat"], b["lon"]) for a, b in zip(r, r[1:]))
     speeds = [s for s in (_speed(p) for p in r) if s is not None]
     moving_s = sum(b["ts"] - a["ts"] for a, b in zip(r, r[1:]) if (_speed(b) or 0) >= MOVING_KMH)
     dur = r[-1]["ts"] - r[0]["ts"]
+    name, slug = ride_name(r[0]["ts"])
     return {
-        "id": int(r[0]["ts"]),
+        "id": int(r[0]["ts"]), "name": name, "slug": slug,
         "start": r[0]["ts"], "end": r[-1]["ts"], "duration_s": round(dur),
         "moving_s": round(moving_s),
         "distance_km": round(dist / 1000, 2),

@@ -77,6 +77,11 @@ section.overlay.open{display:block}
   <div class="card"><h2>Antaganden</h2><div class="note" id="hass"></div></div>
 </section>
 <section id="pos">
+  <div class="card" id="livecard" style="display:none;outline:2px solid var(--ok)"><h2>🔴 Pågående tur – live</h2>
+    <div class="grid" id="livenow"></div>
+    <div id="livemap" style="height:360px;border-radius:10px;margin-top:8px"></div>
+    <div class="grid" id="livestats" style="margin-top:8px"></div>
+    <div class="note">Uppdateras varannan sekund medan datorn är med på turen. Titta inte på skärmen när du kör – larmen hörs.</div></div>
   <div class="card"><h2>Position</h2><div class="grid" id="gpsmain"></div><div class="note" id="gpsnote"></div></div>
   <div class="card"><h2>Turer</h2><table id="ridelist"></table>
     <div id="ridemodes" style="margin-top:10px;display:none"></div>
@@ -367,9 +372,9 @@ function loadLeaflet(){return new Promise((ok,bad)=>{if(window.L)return ok();
   const j=document.createElement('script');j.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';j.onload=ok;j.onerror=bad;document.head.appendChild(j)})}
 const dur=s=>s>=3600?`${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min`:`${Math.round(s/60)} min`;
 async function ridestick(force){try{if(!$('pos').classList.contains('act'))return;if(!force&&Date.now()-ridesLoaded<30000)return;ridesLoaded=Date.now();
-  const r=await fetch('/api/rides').then(r=>r.json());
-  $('ridelist').innerHTML=r.rides.length?'<tr><td>Start</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Högsta effekt</td><td>Lägsta marginal</td><td>Hjulets fart</td><td>Fartrimlighet</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
-    <td>${new Date(x.start*1000).toLocaleString('sv-SE',{dateStyle:'short',timeStyle:'short'})}</td><td>${fmt(x.distance_km,2,'km')}</td><td>${dur(x.moving_s)}</td>
+  const r=await fetch('/api/rides').then(r=>r.json());r.rides.forEach(x=>rideSlugs[x.id]=x.slug);
+  $('ridelist').innerHTML=r.rides.length?'<tr><td>Tur</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Högsta effekt</td><td>Lägsta marginal</td><td>Hjulets fart</td><td>Fartrimlighet</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
+    <td><b>${x.name||new Date(x.start*1000).toLocaleString('sv-SE')}</b></td><td>${fmt(x.distance_km,2,'km')}</td><td>${dur(x.moving_s)}</td>
     <td>${fmt(x.max_kmh,0,'km/h')}</td><td>${fmt(x.avg_moving_kmh,0,'km/h')}</td>
     <td>${fmt(x.power_max_w,0,'W')}</td><td>${x.min_margin_pct!=null?`<span class="${x.min_margin_pct<=20?'bad':x.min_margin_pct<=30?'warn':'ok'}">${x.min_margin_pct.toFixed(0)} %</span>`:'—'}</td><td class="note">${x.wheel_speed_share_pct} % av punkterna</td>
     <td>${x.spin_s||x.carried_s?`<span class="warn">${x.spin_s?'⚠️ snurrar '+x.spin_s+' s ':''}${x.carried_s?'⚠️ bärs '+x.carried_s+' s':''}</span>`:(x.checked_share_pct?`<span class="ok">✅</span> <span class="note">${x.checked_share_pct} % kontrollerat</span>`:'<span class="note">kan ej bedömas</span>')}</td>
@@ -471,7 +476,8 @@ async function gradeEnergyTick(){try{const g=await fetch('/api/analysis/grade-en
   $('gradeenergy').innerHTML=g.bins.length?'<tr><td>Lutning</td><td>Wh/km</td><td></td><td>Sträcka</td></tr>'+g.bins.map(b=>`<tr><td>${b.grade_pct>0?'+':''}${b.grade_pct} %</td><td>${fmt(b.wh_per_km,1)}</td>
     <td style="width:45%"><div style="height:10px;border-radius:0 4px 4px 0;background:${divColor(b.grade_pct,10)};width:${b.wh_per_km!=null?Math.max(2,100*Math.abs(b.wh_per_km)/mx):0}%"></div></td><td class="note">${b.km} km</td></tr>`).join('')
     :`<tr><td class="note">Inga analyserade turer ännu (${g.rides}).</td></tr>`}catch(e){}}
-async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(null,'','#ride='+id)}catch(e){}
+let rideSlugs={};
+async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(null,'','#tur='+(rideSlugs[id]||id))}catch(e){}
   try{await loadLeaflet()}catch(e){$('ridelegend').textContent='Kartan kunde inte laddas (kräver internet för kartbilder).';return}
   const r=await fetch('/api/rides/'+id).then(r=>r.json());if(!r.track)return;rideData=r;rideAna=null;
   const el=$('ridemap');el.style.display='block';
@@ -587,15 +593,37 @@ async function prefshint(){try{const S=await fetch('/api/settings').then(r=>r.js
   const miss=[['rider_kg','din vikt'],['wheel_kg','hjulets vikt']].filter(([k])=>S.values[k]==null).map(([,l])=>l);
   $('prefshint').style.display=miss.length?'block':'none';
   $('prefshint').innerHTML=miss.length?`⚙️ Fyll i ${miss.join(' och ')} under <button class="btn" onclick="togglePrefs(true)">Inställningar</button> uppe till höger – behövs för jämförelsen av höjd och energi med fysiken.`:''}catch(e){}}
+let LIVEMAP=null,LIVELAYER=null,liveFollow=true;
+async function livetick(){try{if(!$('pos').classList.contains('act'))return;const LV=await fetch('/api/rides/live').then(r=>r.json());
+  $('livecard').style.display=LV.live?'block':'none';if(!LV.live)return;
+  const S=LV.summary,T=LV.totals||{},N=LV.now||{};
+  $('livecard').querySelector('h2').textContent='🔴 '+S.name+' – pågår';
+  $('livenow').innerHTML=kv('Fart nu',fmt(N.speed_kmh,1,'km/h'))+kv('Säkerhetsmarginal',N.margin!=null?`<span class="${N.margin<=20?'bad':N.margin<=30?'warn':'ok'}">${N.margin.toFixed(0)} %</span>`:'—')
+    +kv('Effekt nu',fmt(N.power_w,0,'W'))+kv('Larm under turen',LV.alarms?`<span class="bad">${LV.alarms}</span>`:'<span class="ok">0</span>');
+  $('livestats').innerHTML=kv('Sträcka',fmt(S.distance_km,2,'km'))+kv('Tid',dur(S.duration_s))+kv('Höjdmeter ↑ / ↓',`${fmt(T.ascent_m,0)} / ${fmt(T.descent_m,0)} m`)
+    +kv('Energi ut / återvunnet',`${fmt(T.wh_out,1)} / ${fmt(T.wh_regen,1)} Wh`)+kv('Förbrukning',fmt(T.wh_per_km,1,'Wh/km'))
+    +LV.max.filter(x=>['speed','power','regen','current','margin'].includes(x.key)).map(x=>kv(x.label,`${x.value} ${x.unit}`)).join('');
+  try{await loadLeaflet()}catch(e){return}
+  if(!LIVEMAP){LIVEMAP=L.map($('livemap'));L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(LIVEMAP);
+    LIVEMAP.on('dragstart',()=>liveFollow=false)}
+  if(LIVELAYER)LIVELAYER.remove();LIVELAYER=L.layerGroup().addTo(LIVEMAP);const tr=LV.track;if(tr.length<1)return;
+  const vmax=Math.max(10,...tr.map(p=>p[2]||0)),st=vmax/RAMP.length;
+  L.polyline(tr.map(p=>[p[0],p[1]]),{color:'#fff',weight:9,opacity:.9}).addTo(LIVELAYER);
+  for(let i=1;i<tr.length;i++)L.polyline([[tr[i-1][0],tr[i-1][1]],[tr[i][0],tr[i][1]]],{color:RAMP[Math.min(RAMP.length-1,Math.floor((tr[i][2]||0)/st))],weight:6}).addTo(LIVELAYER);
+  const last=tr.at(-1);L.circleMarker([last[0],last[1]],{radius:9,color:'#fff',weight:3,fillColor:'#d95926',fillOpacity:1}).bindTooltip('Du är här').addTo(LIVELAYER);
+  LIVEMAP.invalidateSize();if(liveFollow)LIVEMAP.setView([last[0],last[1]],Math.max(LIVEMAP.getZoom()||0,16));
+}catch(e){}}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
 tick();logtick();
 // deep links: #pos opens the tab, #ride=<id> opens a ride on the map
-(()=>{const h=location.hash;const m=h.match(/ride=(\d+)/);
+(async()=>{const h=location.hash;let m=h.match(/ride=(\d+)/);
+  const ms=h.match(/tur=([\d-]+)/);
+  if(ms){try{const rr=await fetch('/api/rides').then(r=>r.json());const hit=rr.rides.find(x=>x.slug===ms[1]);if(hit){rr.rides.forEach(x=>rideSlugs[x.id]=x.slug);m=[0,String(hit.id)]}}catch(e){}}
   if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m){const md=h.match(/mode=(\w+)/);if(md)rideMode=md[1];setTimeout(()=>showRide(+m[1]),300)}}
   else if(h==='#prefs')togglePrefs(true);
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
-guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
+guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);livetick();setInterval(livetick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

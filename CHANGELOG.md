@@ -2,6 +2,14 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.17.0 – 2026-10-03
+- **Live view of the ride going on** (Position & turer): appears automatically while a ride is
+  recorded – map following the current position with the track coloured by speed, speed,
+  safety margin and power now, alarms during the ride, distance, time, metres up/down, energy
+  out/regenerated, Wh/km and max values so far (`/api/rides/live`, refreshed every 2 s).
+- **Rides are named by date and time** ("Tur 3 okt 2026 kl. 14:39") instead of a number, with
+  readable links `#tur=2026-10-03-1439` (old `#ride=<id>` links still work).
+
 ## 0.16.2 – 2026-10-03
 - Fix: a ride analysed while it was still going on kept its first (short) analysis – the cache
   key now includes the ride's point count and end time, so a grown ride is recomputed

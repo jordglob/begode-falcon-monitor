@@ -71,3 +71,12 @@ def test_ride_summary_counts_spin_time():
     t = rides.track(rides.segment(p)[0])
     assert t[25][4] == "spin" and t[5][4] == "ok"
     assert s["max_kmh"] == 20                             # spinning (45) not counted as max
+
+
+def test_ride_name_and_slug():
+    import time
+    ts = time.mktime((2026, 10, 3, 14, 39, 41, 0, 0, -1))
+    name, slug = rides.ride_name(ts)
+    assert name == "Tur 3 okt 2026 kl. 14:39" and slug == "2026-10-03-1439"
+    s = rides.summary(rides.segment(pts(ts, 60))[0])
+    assert s["name"] == name and s["slug"] == slug

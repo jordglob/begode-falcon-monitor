@@ -726,6 +726,39 @@ def api_ride_analysis(ride_id: int, fresh: bool = False):
     return res
 
 
+LIVE_GAP_S = 60
+
+
+@app.get("/api/rides/live")
+def api_ride_live():
+    """The ride going on right now (last GPS point < 60 s old), with running totals and the
+    max values so far – for the live view."""
+    pts = rides_mod.load_points(store.db, time.time() - 6 * 3600)
+    segs = rides_mod.segment(pts)
+    if not pts or not segs or time.time() - pts[-1]["ts"] > LIVE_GAP_S:
+        return {"live": False}
+    r = segs[-1]
+    if time.time() - r[-1]["ts"] > LIVE_GAP_S:
+        return {"live": False}
+    # include the points after the segment's trimmed end (standing still now)
+    r = [p for p in pts if p["ts"] >= r[0]["ts"]]
+    summ = rides_mod.summary(r)
+    a = rideanalysis.analyze(r, SETTINGS, dem, settings_mod.total_mass(SETTINGS))
+    mx = tripmax.compute(r, store.samples_between(r[0]["ts"], r[-1]["ts"]), a,
+                         store.beep_events_between(r[0]["ts"], r[-1]["ts"]))
+    tail = rides_mod.track(r)[-900:]
+    return {"live": True, "summary": summ, "totals": a.get("totals") if a.get("ok") else None,
+            "max": mx["items"], "alarms": mx["alarms"]["count"], "track": tail,
+            "now": {"speed_kmh": (state.p0 or {}).get("speed_kmh"), "margin": alarms.report().get("safety_margin_pct"),
+                    "power_w": round(energy_power_now()) if energy_power_now() is not None else None}}
+
+
+def energy_power_now():
+    v = bus.bus_v(state.p0 or {})
+    i = (state.p7 or {}).get("battery_current_a")
+    return v * i if v is not None and i is not None else None
+
+
 @app.get("/api/rides/{ride_id:int}/max")
 def api_ride_max(ride_id: int):
     r = _ride_points(ride_id)
