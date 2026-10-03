@@ -72,7 +72,7 @@ def test_cells_two_strings_of_24(replay):
 def test_packet4_settings(replay):
     p4 = replay[0].p4
     assert p4["tiltback_or_pedal"] == 51
-    assert p4["auto_power_off_s"] == 7200
+    assert p4["power_off_in_s"] == 7200
     assert p4["led_mode"] == 3
     assert p4["alerts"] == [] and p4["in_miles"] is False
     assert 830_000 < p4["odometer_raw"] < 840_000

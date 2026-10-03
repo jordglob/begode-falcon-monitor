@@ -84,8 +84,8 @@ def test_motion_block():
 
 
 def test_diff_ignores_volatile_fields():
-    a = {"p4.led_mode": 3, "p0.speed_kmh": 0, "p1[0].temp_a_c": 30}
-    b = {"p4.led_mode": 4, "p0.speed_kmh": 1, "p1[0].temp_a_c": 31}
+    a = {"p4.led_mode": 3, "p0.speed_kmh": 0, "p1[0].temp_a_c": 30, "p4.power_off_in_s": 7200}
+    b = {"p4.led_mode": 4, "p0.speed_kmh": 1, "p1[0].temp_a_c": 31, "p4.power_off_in_s": 7199}
     assert ctl.diff(a, b) == {"p4.led_mode": [3, 4]}
 
 

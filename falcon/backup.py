@@ -15,6 +15,9 @@ from pathlib import Path
 # backup field -> control setting id; only settings the wheel reports back (verified)
 RESTORABLE = {"p4.led_mode": "led_mode"}
 
+# reported in packet 4 but not settings: they change by themselves
+NOT_SETTINGS = ("p4.odometer_raw", "p4.alert_raw", "p4.alerts", "p4.power_off_in_s")
+
 NAME_RE = re.compile(r"^settings-\d{8}-\d{6}\.json$")
 
 
@@ -79,4 +82,4 @@ class Backups:
         now = {f"p4.{k}": v for k, v in (snapshot.get("p4") or {}).items()}
         return {k: [v, now.get(k)] for k, v in doc.get("settings", {}).items()
                 if k.startswith("p4.") and k in now and now.get(k) != v
-                and k not in ("p4.odometer_raw", "p4.alert_raw", "p4.alerts")}
+                and k not in NOT_SETTINGS}

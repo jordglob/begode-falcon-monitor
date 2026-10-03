@@ -142,7 +142,7 @@ FIELD_INFO = {
     "p4.speed_alarm_mode": ("Fartlarmläge (bitar 10–11)", "", "scale"),
     "p4.roll_angle_mode": ("Lutningsvinkel-läge (bitar 7–8)", "", "scale"),
     "p4.in_miles": ("Miles", "", "ok"),
-    "p4.auto_power_off_s": ("Auto-avstängning", "s", "ok"),
+    "p4.power_off_in_s": ("Tid kvar till auto-avstängning (nedräkning, 7200 = full)", "s", "ok"),
     "p4.tiltback_or_pedal": ("Tiltback-fart eller pedalkänslighet", "", "unknown"),
     "p4.led_mode": ("LED-/stämningsljusläge", "", "ok"),
     "p4.alert_raw": ("Larmbyte, rått", "", "ok"),
@@ -225,7 +225,7 @@ def decode_p4(f: Frame) -> dict:
         "speed_alarm_mode": (settings >> 10) & 3,
         "roll_angle_mode": (settings >> 7) & 3,
         "in_miles": bool(settings & 1),
-        "auto_power_off_s": apo,
+        "power_off_in_s": apo,          # countdown, not a setting (seen 7200 -> 0 -> off)
         "tiltback_or_pedal": w5,
         "led_mode": p[11],                 # frame byte 13 (ambient light)
         "alert_raw": alert,

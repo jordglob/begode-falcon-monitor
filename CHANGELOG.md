@@ -2,6 +2,13 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.9.1 – 2026-10-03
+- Packet 4 word 4 is a **countdown to auto power-off** (seen live: 7200 → 0, then the wheel
+  switched itself off), not a setting. Renamed `power_off_in_s`; the Live tab shows
+  "Stänger av om … min" with ⚠️ below 10 minutes.
+- Settings backup and the control field diff ignore the countdown (it caused one spurious
+  "setting changed" backup per minute).
+
 ## 0.9.0 – 2026-10-02
 - **Settings backup**: dated JSON snapshots (decoded settings, wheel firmware, BLE module,
   odometer, every raw packet row) in `~/.local/share/begode-falcon/backups/` (`FALCON_BACKUPS`).

@@ -176,7 +176,8 @@ def flat(snap: dict) -> dict:
 
 VOLATILE = ("speed_kmh", "phase_current_a", "battery_current_a", "board_temp_c", "trip_m",
             "voltage_raw", "word7_raw", "current_a", "voltage_v", "half_voltage_v", "temp_",
-            "motor_temp_c", "info_raw", "activity", "cell_balance", "pwm_pct", "flags_raw")
+            "motor_temp_c", "info_raw", "activity", "cell_balance", "pwm_pct", "flags_raw",
+            "power_off_in_s", "odometer_raw")
 
 
 def diff(before: dict, after: dict) -> dict:

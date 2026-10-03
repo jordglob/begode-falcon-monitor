@@ -44,3 +44,11 @@ def test_changes_vs_now_ignores_odometer(tmp_path):
 def test_load_rejects_path_tricks(tmp_path):
     with pytest.raises(ValueError):
         Backups(tmp_path).load("../../etc/passwd")
+
+
+def test_power_off_countdown_is_not_a_setting_change(tmp_path):
+    st = replay()
+    doc = Backups(tmp_path).make(st.snapshot(), st.raw, {}, "x", now=1)
+    snap = st.snapshot()
+    snap["p4"] = {**snap["p4"], "power_off_in_s": 27}       # seen live: 7200 -> 0 -> wheel off
+    assert Backups.changes_vs_now(doc, snap) == {}
