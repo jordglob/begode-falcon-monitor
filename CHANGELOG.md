@@ -2,6 +2,11 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.21.1 – 2026-10-03
+- Fix: tabs restored from the last visit (Grafer, Batterihälsa …) stayed empty – the restore ran
+  before the rest of the page script was defined. It now runs afterwards, and the tab views
+  refresh themselves every 10 s.
+
 ## 0.21.0 – 2026-10-03
 - **Learned cell resistance survives restarts** (regression state saved every minute and
   restored at start).
