@@ -2,6 +2,17 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.16.1 – 2026-10-03
+- **Verification waits for a slow wheel** (seen live: tiltback showed the new value only after
+  the first fresh packet): every fresh frame is read for up to 5 s until the wheel shows the
+  ordered value ("bekräftat efter 1,4 s"); only then is it a mismatch.
+- **Late changes are watched** for 60 s after every command and logged ("bekräftat sent" /
+  "ändrades senare") – nothing changes unnoticed.
+- **"Hjulet visar nu"** is updated every second for all readable settings (rows are no longer
+  re-rendered, so values never freeze); a changed value flashes green.
+- Field changes are collected over 5 s also for settings that cannot be read back, and a refused
+  command shows the real reason (e.g. "motorn arbetar (fasström)").
+
 ## 0.16.0 – 2026-10-03
 - **Tiltback mapped live**: with the wheel lifted, `WY48` changed packet 4 word 5 from 51 to 48
   and nothing else; `WY51` restored it (verified). Word 5 is the **tiltback speed in km/h**

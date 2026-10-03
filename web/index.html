@@ -300,10 +300,10 @@ async function ctlConfirm(){const r=await post('/api/control/confirm',{token:ctl
   $('ctlnote').textContent=r.ok?'':'⛔ '+r.error;ctltick()}
 async function ctlDisable(){await post('/api/control/disable');ctlToken=null;ctltick()}
 async function ctlSend(id){if(ctlBusy)return;const el=$('v_'+id);const v=el?el.value:null;ctlBusy=true;
-  $('ctlnote').textContent='⏳ skickar två gånger och läser tillbaka …';
+  $('ctlnote').textContent='⏳ skickar två gånger och läser tillbaka (upp till 5 s) …';
   try{const r=await post('/api/control/send',{setting:id,value:v});
     $('ctlnote').textContent=r.ok===false?'⛔ '+r.error:'';}finally{ctlBusy=false;ctltick()}}
-const RS={verified:'✅ verifierad',mismatch:'❌ hjulet visar annat',unverifiable:'⚠️ skickad, ej verifierbar',refused:'⛔ nekad',unknown:'❓ okänt läge – läs om',fel:'❌ fel'};
+const RS={verified:'✅ verifierad',mismatch:'❌ hjulet visar annat',unverifiable:'⚠️ skickad, ej verifierbar',refused:'⛔ nekad',unknown:'❓ okänt läge – läs om',fel:'❌ fel',late_verified:'✅ bekräftat sent',late_change:'⚠️ ändrades senare'};
 async function ctltick(){try{const c=await fetch('/api/control').then(r=>r.json());
   $('ctlbanner').classList.toggle('ctlon',c.enabled);bkCtl={enabled:c.enabled,local:c.local_client};
   $('ctlstate').innerHTML=c.enabled?`<span class="bad">⚠️ STYRNING PÅ</span> <span style="font-size:14px">– stängs av automatiskt om ${Math.floor(c.auto_off_in_s/60)}:${String(c.auto_off_in_s%60).padStart(2,'0')}</span>`
@@ -316,12 +316,16 @@ async function ctltick(){try{const c=await fetch('/api/control').then(r=>r.json(
   $('ctlbtns').innerHTML=b+(local?'':' <span class="note">Styrning bara från X230 – den här enheten kan bara titta.</span>');
   const can=c.enabled&&local&&!c.motion_block&&c.connected;
   if(c.enabled&&c.motion_block&&!ctlBusy)$('ctlnote').textContent='⛔ '+c.motion_block;
-  const editing=document.activeElement&&$('ctlset').contains(document.activeElement);
-  if(!editing) $('ctlset').innerHTML=c.settings.map(s=>{let inp='';
-    if(s.kind==='int')inp=`<input id="v_${s.id}" type="number" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.current??s.min}" style="width:70px">`;
-    if(s.kind==='choice')inp=`<select id="v_${s.id}">${Object.entries(s.choices).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>`;
-    return `<tr><td>${s.verifiable?'✅':'⚠️'}</td><td>${s.label}</td><td>${s.current!=null?'nu: <b>'+s.current+'</b>':''}</td><td>${inp}</td>
-      <td><button class="btn go" ${can&&!ctlBusy?'':'disabled'} onclick="ctlSend('${s.id}')">${s.kind==='action'?'Kör':'Skicka'}</button></td></tr>`}).join('');
+  // rows are built once; afterwards only the live values are updated (never frozen)
+  const sig=c.settings.map(x=>x.id).join()+'|'+can;
+  if($('ctlset').dataset.sig!==sig){$('ctlset').dataset.sig=sig;
+    $('ctlset').innerHTML='<tr><td></td><td>Inställning</td><td>Hjulet visar nu</td><td>Nytt värde</td><td></td></tr>'+c.settings.map(s=>{let inp='';
+      if(s.kind==='int')inp=`<input id="v_${s.id}" type="number" min="${s.min}" max="${s.max}" step="${s.step}" value="${s.current??s.min}" style="width:70px">`;
+      if(s.kind==='choice')inp=`<select id="v_${s.id}">${Object.entries(s.choices).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>`;
+      return `<tr><td>${s.verifiable?'✅':'⚠️'}</td><td>${s.label}</td><td><b id="now_${s.id}" style="font-size:17px;padding:2px 6px;border-radius:6px">${s.verifiable?(s.current??'—'):'<span class="note">rapporteras ej</span>'}</b></td><td>${inp}</td>
+        <td><button class="btn go" ${can&&!ctlBusy?'':'disabled'} onclick="ctlSend('${s.id}')">${s.kind==='action'?'Kör':'Skicka'}</button></td></tr>`}).join('')}
+  for(const x of c.settings){if(!x.verifiable)continue;const el=$('now_'+x.id);if(!el)continue;const txt=String(x.current??'—');
+    if(el.textContent!==txt){el.textContent=txt;el.style.background='#1d5e33';setTimeout(()=>el.style.background='',2500)}}
   $('ctllog').innerHTML='<tr><td>Tid</td><td>Inställning</td><td>Skickat</td><td>Resultat</td><td>Ändrade fält / svar</td></tr>'+c.log.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td>
     <td>${x.setting} = ${x.value}</td><td><code>${x.payload}</code> × ${x.sends}</td><td>${RS[x.status]||x.status}${x.detail?' – '+x.detail:''}</td>
     <td class="note">${x.reply&&x.reply.length?'svar: '+x.reply.join(' / ')+'<br>':''}${x.changes&&Object.keys(x.changes).length?Object.entries(x.changes).map(([k,v])=>`${k}: ${v[0]} → ${v[1]}`).join('<br>'):'inga ändrade fält'}</td></tr>`).join('');
@@ -591,7 +595,7 @@ tick();logtick();
   if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m){const md=h.match(/mode=(\w+)/);if(md)rideMode=md[1];setTimeout(()=>showRide(+m[1]),300)}}
   else if(h==='#prefs')togglePrefs(true);
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
-guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
+guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

@@ -143,6 +143,9 @@ def api(monkeypatch):
     monkeypatch.setattr(srv, "link", fl)
     monkeypatch.setattr(srv, "gate", ctl.ControlGate(addresses=lambda: {"testclient"}))
     monkeypatch.setattr(srv.time, "time", __import__("time").time)
+    monkeypatch.setattr(srv, "DIFF_WINDOW_S", 0.2)
+    monkeypatch.setattr(srv, "SETTLE_S", 1.0)
+    srv._watches.clear()
 
     def touch():
         fl.last_frame_ts = __import__("time").time()
@@ -196,3 +199,28 @@ def test_api_backup_and_restore(api):
     assert {"field": "p4.led_mode", "status": "verified", "value": 3} in r["results"]
     assert {"field": "p4.tiltback_kmh", "status": "redan rätt", "value": 51} in r["results"]
     assert fl.sent == [b"WM3", b"WM3"]
+
+
+def test_api_late_change_is_logged(api):
+    """The wheel applies a value only after the verification window -> logged as late."""
+    import time as _t
+    c, fl, touch, srv = api
+    c.post("/api/control/confirm", json={"token": c.post("/api/control/enable").json()["token"]})
+    orig_write = fl.write
+
+    async def lazy_write(payload):              # wheel ignores it for now
+        fl.sent.append(payload)
+
+        async def fresh():
+            await asyncio.sleep(0.05)
+            srv.state.counts[4] = srv.state.counts.get(4, 0) + 1
+        asyncio.ensure_future(fresh())
+    fl.write = lazy_write
+    touch()
+    r = c.post("/api/control/send", json={"setting": "led_mode", "value": 6}).json()
+    assert r["status"] == "mismatch" and "bevakas" in r["detail"]
+    srv.state.p4 = {**srv.state.p4, "led_mode": 6}            # ... applies late
+    srv._check_watches()
+    log = c.get("/api/control").json()["log"]
+    assert log[0]["status"] == "late_verified" and log[0]["after"] == "6"
+    fl.write = orig_write

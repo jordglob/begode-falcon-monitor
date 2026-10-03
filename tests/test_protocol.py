@@ -146,20 +146,20 @@ def run(coro):
 
 def test_verify_writes_twice_reads_once():
     w = FakeWheel(b"s")
-    v = Verifier(w.send, w.read, lambda: False, frame_timeout=0.5, gap=0.01)
+    v = Verifier(w.send, w.read, lambda: False, frame_timeout=0.5, gap=0.01, settle_timeout=0.3)
     r = run(v.apply(cmd_pedal_mode("hard"), expected=b"h"))
     assert r.status == "verified" and r.sends == 2 and w.sent == [b"h", b"h"]
 
 
 def test_verify_survives_one_lost_write():
     w = FakeWheel(b"s", ignore_writes=1)
-    v = Verifier(w.send, w.read, lambda: False, frame_timeout=0.5, gap=0.01)
+    v = Verifier(w.send, w.read, lambda: False, frame_timeout=0.5, gap=0.01, settle_timeout=0.3)
     assert run(v.apply(cmd_pedal_mode("hard"), expected=b"h")).status == "verified"
 
 
 def test_verify_reports_mismatch():
     w = FakeWheel(b"s", ignore_writes=2)
-    v = Verifier(w.send, w.read, lambda: False, frame_timeout=0.5, gap=0.01)
+    v = Verifier(w.send, w.read, lambda: False, frame_timeout=0.5, gap=0.01, settle_timeout=0.3)
     r = run(v.apply(cmd_pedal_mode("hard"), expected=b"h"))
     assert r.status == "mismatch" and r.after == b"s"
 
@@ -231,3 +231,31 @@ def test_settings_reachable_from_header():
     html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
     head = html.split("<nav>")[0]
     assert 'onclick="togglePrefs()"' in head and '<section id="prefs" class="overlay">' in html
+
+
+def test_verify_waits_for_a_slow_wheel():
+    """Seen live: the wheel showed the new value only after a while."""
+    class Slow(FakeWheel):
+        async def send(self, payload):
+            self.sent.append(payload)
+
+            async def later():
+                await asyncio.sleep(0.4)                 # applies late
+                self.value = payload
+            async def frames():
+                for _ in range(20):
+                    await asyncio.sleep(0.05)
+                    self.gen += 1
+            asyncio.ensure_future(later())
+            asyncio.ensure_future(frames())
+    w = Slow(b"s")
+    v = Verifier(w.send, w.read, lambda: None, frame_timeout=0.5, gap=0.01, settle_timeout=2.0)
+    r = run(v.apply(cmd_pedal_mode("hard"), expected=b"h"))
+    assert r.status == "verified" and "bekräftat efter" in r.detail
+
+
+def test_refusal_reason_is_shown():
+    w = FakeWheel(b"s")
+    v = Verifier(w.send, w.read, lambda: "motorn arbetar (fasström)")
+    r = run(v.apply(cmd_pedal_mode("hard"), b"h"))
+    assert r.status == "refused" and r.detail == "motorn arbetar (fasström)"

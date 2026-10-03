@@ -29,35 +29,32 @@ class Verifier:
     send:      coroutine that writes raw bytes to the wheel
     read:      returns (generation, value) — generation increments on every fresh
                settings frame, so we never accept a stale value
-    is_moving: returns True if the wheel is rolling (changes are refused)
+    is_moving: returns a reason (str) or True if changes must be refused, else None/False
+
+    Seen live: the wheel can take SECONDS before its reports show a new value. So after the
+    two writes every fresh frame is read until the value matches or `settle_timeout` passes;
+    only then is it a mismatch (and the server keeps watching for a late change).
     """
 
     def __init__(self, send: Callable[[bytes], Awaitable[None]],
                  read: Callable[[], tuple[int, object]],
-                 is_moving: Callable[[], bool],
-                 frame_timeout: float = 2.0, gap: float = 0.15):
+                 is_moving: Callable[[], object],
+                 frame_timeout: float = 2.0, gap: float = 0.15, settle_timeout: float = 5.0):
         self.send = send
         self.read = read
         self.is_moving = is_moving
         self.frame_timeout = frame_timeout
         self.gap = gap
-
-    async def _fresh_value(self, after_gen: int) -> Optional[object]:
-        deadline = time.monotonic() + self.frame_timeout
-        while time.monotonic() < deadline:
-            gen, val = self.read()
-            if gen > after_gen:
-                return val
-            await asyncio.sleep(0.05)
-        return None
+        self.settle_timeout = settle_timeout
 
     async def apply(self, cmd: Command, expected: object = None) -> VerifyResult:
         r = VerifyResult(cmd.name, "unknown", ts=time.time())
         if is_blocked(cmd.payload):
             r.status, r.detail = "refused", "spärrat kommando"
             return r
-        if self.is_moving():
-            r.status, r.detail = "refused", "hjulet rullar"
+        why = self.is_moving()
+        if why:
+            r.status, r.detail = "refused", why if isinstance(why, str) else "hjulet rullar"
             return r
         _, r.before = self.read()
         # write twice (absolute commands only; a toggle sent twice undoes itself)
@@ -69,15 +66,28 @@ class Verifier:
         if expected is None:
             r.status, r.detail = "unverifiable", "skickat, hjulet rapporterar inte värdet"
             return r
-        # read once: only a frame produced after the last write counts
-        gen_after_write, _ = self.read()
-        val = await self._fresh_value(gen_after_write)
-        if val is None:
-            r.status, r.detail = "unknown", "inget färskt paket — läs om"
-            return r
-        r.after = val
-        if val == expected:
-            r.status = "verified"
-        else:
-            r.status, r.detail = "mismatch", f"hjulet visar {val}, väntat {expected}"
-        return r
+        # read every frame produced after the last write until it matches or time runs out
+        t_sent = time.monotonic()
+        gen0, _ = self.read()
+        seen_fresh = False
+        last = None
+        while True:
+            now = time.monotonic()
+            gen, val = self.read()
+            if gen > gen0:
+                seen_fresh, last, gen0 = True, val, gen
+                if val == expected:
+                    r.after = val
+                    r.status = "verified"
+                    r.detail = f"bekräftat efter {now - t_sent:.1f} s"
+                    return r
+            if not seen_fresh and now - t_sent > self.frame_timeout:
+                r.status, r.detail = "unknown", "inget färskt paket — läs om"
+                return r
+            if now - t_sent > self.settle_timeout:
+                r.after = last
+                r.status = "mismatch"
+                r.detail = (f"hjulet visar {last}, väntat {expected} efter {self.settle_timeout:.0f} s"
+                            " – bevakas vidare")
+                return r
+            await asyncio.sleep(0.05)

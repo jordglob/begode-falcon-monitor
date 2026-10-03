@@ -193,6 +193,10 @@ async def guard_loop() -> None:
             health.tick(time.time(), state.snapshot() if fresh else None, bool(fresh))
         except Exception as e:  # health must never stop the guard
             log_event(f"Batterihälsa: fel {e}")
+        try:
+            _check_watches()
+        except Exception as e:
+            log_event(f"Bevakning: fel {e}")
         if not fresh:
             continue
         found = {(f.code, f.where): f for f in guard.update(state.snapshot())
@@ -380,6 +384,30 @@ def api_control_disable(req: Request):
 
 
 _send_lock = asyncio.Lock()
+DIFF_WINDOW_S = 5.0          # how long field changes are collected after a command
+SETTLE_S = 5.0               # how long the wheel gets to show a new value
+_watches: list = []          # settings watched for late changes after a command
+
+
+def _check_watches() -> None:
+    """A setting that changes AFTER its command was judged (the wheel can be slow, or a
+    value can be changed elsewhere) is logged – nothing may change unnoticed."""
+    now = time.time()
+    for w in list(_watches):
+        cur = w["reader"](state)[1]
+        if cur != w["value"]:
+            ok = cur == w["expected"]
+            row = {"ts": now, "host": "server", "setting": w["setting"], "value": str(cur), "payload": "",
+                   "status": "late_verified" if ok else "late_change", "sends": 0,
+                   "before": str(w["value"]), "after": str(cur),
+                   "detail": ("hjulet visade det beställda värdet först nu" if ok else
+                              f"värdet ändrades till {cur} (beställt {w['expected']})"),
+                   "changes": {}, "reply": None}
+            store.add_control(row)
+            log_event(f"{'✅' if ok else '⚠️'} {w['label']}: hjulet visar nu {cur} (sen ändring, beställt {w['expected']})")
+            w["value"] = cur
+        if now > w["until"]:
+            _watches.remove(w)
 
 
 class Busy(Exception):
@@ -398,7 +426,7 @@ async def _send(host: str, setting: str, value) -> dict:
 
         def moving():
             age = time.time() - link.last_frame_ts if link.last_frame_ts else None
-            return ctl.motion_block(state.snapshot(), age) is not None
+            return ctl.motion_block(state.snapshot(), age)          # reason text or None
 
         reader = spec["read"] or (lambda st: (st.counts.get(4, 0), None))
         expected = spec["expected"](value) if spec.get("expected") else None
@@ -406,18 +434,30 @@ async def _send(host: str, setting: str, value) -> dict:
         t0 = time.time()
         err = None
         try:
-            res = await Verifier(link.write, lambda: reader(state), moving).apply(cmd, expected)
+            res = await Verifier(link.write, lambda: reader(state), moving,
+                                 settle_timeout=SETTLE_S).apply(cmd, expected)
         except Exception as e:
             res, err = None, str(e)
-        await asyncio.sleep(1.5)          # let every packet row refresh before the diff
+        # collect every field that changes during the next 5 s (the wheel can be slow to
+        # report a new value) – also maps settings that cannot be read back directly
+        changes: dict = {}
+        steps = max(1, int(DIFF_WINDOW_S / 0.5))
+        for _ in range(steps):
+            await asyncio.sleep(DIFF_WINDOW_S / steps)
+            for k, v in ctl.diff(before, ctl.flat(state.snapshot())).items():
+                changes[k] = v
         after = ctl.flat(state.snapshot())
         reply = ascii_replies(link.notifications_since(t0)) if spec.get("ascii_reply") else None
         row = {"ts": t0, "host": host, "setting": setting, "value": str(value),
                "payload": cmd.payload.decode(errors="replace"),
                "status": res.status if res else "fel", "sends": res.sends if res else 0,
                "before": str(res.before) if res else None, "after": str(res.after) if res else None,
-               "detail": res.detail if res else err, "changes": ctl.diff(before, after), "reply": reply}
+               "detail": res.detail if res else err,
+               "changes": {k: [before.get(k), after.get(k)] for k in changes}, "reply": reply}
         store.add_control(row)
+        if spec.get("read") and res and res.status in ("mismatch", "unknown", "verified"):
+            _watches.append({"setting": setting, "label": spec["label"], "reader": spec["read"],
+                             "value": reader(state)[1], "expected": expected, "until": time.time() + 60})
         icon = {"verified": "✅", "mismatch": "❌", "unverifiable": "⚠️", "refused": "⛔"}.get(row["status"], "❓")
         log_event(f"{icon} Kommando {spec['label']} = {value} ({row['payload']}): {row['status']}"
                   + (f" – {row['detail']}" if row["detail"] else ""))
