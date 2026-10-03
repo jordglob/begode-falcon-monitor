@@ -141,10 +141,11 @@ has not yet been used on the real wheel. Current scales and a few fields will be
 under load and while charging. No charts yet – values are shown as numbers and tables.
 See `CHANGELOG.md`.
 
-## Research
+## Research and history
 
 See [`docs/research/`](docs/research/): a feature comparison with other EUC apps and notes on
-the Falcon Pro BLE protocol.
+the Falcon Pro BLE protocol. [`docs/historik.md`](docs/historik.md) (Swedish) summarises how the
+project was developed, version by version.
 
 ## License
 
