@@ -26,6 +26,7 @@ from .fastpath import BusTracker, CellRegression, EnergyCounter
 from . import settings as settings_mod
 from . import rideanalysis
 from .elevation import Dem
+from .beeps import BeepWatch
 from . import __version__
 from . import control as ctl
 from .verify import Verifier
@@ -71,7 +72,14 @@ def _on_frame(f) -> None:
     ts = time.time()
     if f.type == 1:
         _last_group_ts = ts
-    elif f.type == 0:
+    beepwatch.frame(ts, f.type, f.sub, f.payload.hex())
+    if f.type == 0:
+        try:
+            if beepwatch.check(ts, state.snapshot(), state.battery_current()):
+                _publish({"beeps": beepwatch.report()["active"]})
+        except Exception as e:
+            log_event(f"Pip-vakt: fel {e}")
+    if f.type == 0:
         _publish({"bus": bus.on_p0(state.p0, state.p7, ts, store.baseline_sag_ohm())})
         v = bus.bus_v(state.p0)
         energy.add(ts, v, (state.p7 or {}).get("battery_current_a"), (state.p7 or {}).get("pwm_pct"))
@@ -83,6 +91,8 @@ def _on_frame(f) -> None:
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
 gate = ctl.ControlGate()          # OFF at every start
+beepwatch = BeepWatch(Path(os.environ.get("FALCON_BLACKBOX", Path.home() / ".local/share/begode-falcon/blackbox")),
+                      on_event=lambda m: log_event(m))
 SETTINGS = {**settings_mod.defaults(), **(store.get_json("settings") or {})}
 dem = Dem(SETTINGS.get("dem_dir"))
 GPS_ON = os.environ.get("FALCON_GPS", "auto") != "0"
@@ -680,6 +690,30 @@ def api_grade_energy(days: float = 365):
 @app.get("/api/dem")
 def api_dem():
     return dem.describe()
+
+
+@app.get("/api/beeps")
+def api_beeps():
+    return {**beepwatch.report(), "connected": link.connected}
+
+
+@app.post("/api/beeps/mark")
+async def api_beeps_mark(req: Request):
+    """'Jag hör pip nu!' – allowed from any device (it only records)."""
+    body = await req.json() if (await req.body()) else {}
+    m = beepwatch.mark(time.time(), str(body.get("note", ""))[:200])
+    return {"ok": True, **m}
+
+
+@app.get("/api/beeps/box/{name}")
+def api_beeps_box(name: str):
+    import re as _re
+    if not _re.match(r"^blackbox-\d{8}-\d{6}\.json$", name):
+        return _err(Exception("ogiltigt namn"), 404)
+    p = beepwatch.folder / name
+    if not p.exists():
+        return _err(Exception("finns inte"), 404)
+    return FileResponse(p, media_type="application/json", filename=name)
 
 
 @app.get("/api/history")

@@ -155,9 +155,10 @@ FIELD_INFO = {
     "p7.pwm_pct": ("PWM", "%", "scale"),
 }
 
-ALERT_BITS = [(0x01, "hög effekt"), (0x02, "fartlarm 2"), (0x04, "fartlarm 1"),
+# Begode app's meaning first (newer, written for these wheels), WheelLog's second
+ALERT_BITS = [(0x01, "strömfel / hög effekt"), (0x02, "MOS bränd / fartlarm 2"), (0x04, "gyrofel / fartlarm 1"),
               (0x08, "låg spänning"), (0x10, "överspänning"), (0x20, "övertemperatur"),
-              (0x40, "fel på hallsensor"), (0x80, "transportläge")]
+              (0x40, "fel på hallsensor"), (0x80, "låst / transportläge")]
 
 
 def decode_p0(f: Frame) -> dict:

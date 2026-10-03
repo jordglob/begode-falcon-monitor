@@ -35,7 +35,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
 <span id="sig" style="font-size:13px;color:var(--mut)"></span>
 <span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="settings">Inställningar</button><button data-t="log">Logg</button></nav>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="beeps">Pip-larm</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="settings">Inställningar</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
   <div class="card" id="alarmbar" style="display:none"></div>
@@ -88,6 +88,43 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
   <div class="card"><h2>Satelliter</h2><table id="gpssats"></table></div>
   <div class="card"><h2>Statistik</h2><div class="grid" id="gpsstats"></div>
     <div class="note">Positioner sparas var 5:e sekund tillsammans med hjulets egen fart – det blir turerna på kartan ovan.</div></div>
+</section>
+<section id="beeps">
+  <div class="card" id="beepnow"><h2>Varför piper det?</h2><div id="beepactive" style="font-size:18px">—</div>
+    <div style="margin-top:12px"><button class="btn danger" style="font-size:18px;padding:14px 22px" onclick="beepMark()">👂 Jag hör pip nu!</button>
+    &nbsp;Mönster: <select id="beeppat"><option value="">vet inte</option><option>1 pip/s</option><option>2 pip/s</option><option>3 pip/s</option><option>5 pip/s (snabbt, slutar inte)</option>
+    <option>pip var 2:a sekund</option><option>ihållande ton</option><option>från batteriet</option><option>från hjulets mitt/moderkort</option></select>
+    <input id="beepnote" placeholder="egen notering (t.ex. 'uppför, 30 km/h')" style="width:240px"></div>
+    <div class="note" id="beepmarknote">Knappen sparar en "svart låda": allt hjulet skickade 30 s före och 15 s efter, plus alla statusändringar. Fungerar från mobilen också.</div></div>
+  <div class="card"><h2>Händelser (statusändringar i realtid)</h2><table id="beepevents"></table></div>
+  <div class="card"><h2>Svarta lådor</h2><table id="beepboxes"></table>
+    <div class="note">Sparas automatiskt vid varje larmändring och när du trycker på knappen. Ladda ner och skicka för analys.</div></div>
+  <div class="card"><h2>Så gör du när hjulet piper</h2><ol style="line-height:1.6;margin:0 0 0 18px">
+    <li><b>Sakta in och stanna säkert.</b> 5 snabba pip per sekund = motorn är nära sin gräns (80 %-larmet). Pip från batteriet under körning kan betyda att ett paket kopplat bort sig – då bär det andra paketet allt.</li>
+    <li><b>Tryck "Jag hör pip nu!"</b> (här eller på mobilen) och välj mönster – det tidsmärker händelsen och sparar en svart låda.</li>
+    <li><b>Lyssna var ljudet kommer ifrån:</b> moderkortet (hjulets mitt/handtag) eller batteriet (sidorna). Två olika summrar betyder olika saker.</li>
+    <li><b>Räkna pipen:</b> hur många per sekund, och om de slutar av sig själva.</li>
+    <li><b>Titta i den här fliken:</b> "Varför piper det?" visar vad hjulet rapporterar just nu; händelselistan visar vad som ändrades precis innan.</li>
+    <li><b>Om batteriet fortsätter pipa när hjulet står:</b> ladda inom 48 timmar (en cell under ~2,8 V) och kontrollera cellerna under Energilager.</li>
+    <li><b>Kör inte vidare</b> vid fel på hallsensor, "MOS bränd", ett paket utan ström eller pip från batteriet som inte förklaras.</li></ol></div>
+  <div class="card"><h2>Utredning: vad pipen kan betyda</h2>
+    <p class="note" style="font-size:14px;line-height:1.55">Ett Begode-hjul har <b>två summrar</b>:<br>
+    <b>1. Moderkortets summer</b> – fartlarm, 80 %-effektlarmet, låg/hög spänning, hallsensor, temperatur, fall. Mönstren är kända (tabellen nedan) och det mesta syns i det hjulet skickar över Bluetooth: fart, PWM och larmbyte 14 i paket 4.<br>
+    <b>2. BMS-summern inne i batteriet</b> – arbetar <b>helt självständigt</b> från moderkortet och appen. Den piper när någon cell går under ca 2,8 V, vid övertemperatur och vid BMS-fel, och den slutar inte av sig själv (drar ca 20 mA tills batteriet laddas). Själva piperiet rapporteras <b>inte</b> över Bluetooth – men orsakerna syns ofta indirekt: cellspänningar, BMS:ens spänningsstatus (under/över), temperaturstatus, skyddsstatus ("batteri frånkopplat", "cellspänning onormal") och MOS-läget.<br><br>
+    <b>Kopplingen till ditt shuntfel och vältorna:</b> när ett shuntmotstånd brinner av eller ett paket löser ut sitt skydd tappar det paketet strömmen. Moderkortet får plötsligt bara hälften av batteriet, spänningen faller under last och PWM rusar – det kan ge både BMS-pip och moderkortets 80 %-larm samtidigt, alldeles innan hjulet inte orkar mer. Det är exakt det obalansvakten och den här fliken bevakar: "paket som inte bär ström", BMS-skydd, MOS och PWM-zonen loggas med tidsstämpel, och den svarta lådan fångar förloppet.<br><br>
+    <b>Två tolkningar av larmbyten:</b> Begode-appen och WheelLog läser byte 14 olika (se tabellen). För bit 0x02 säger Begode-appen <b>"MOS-transistor bränd"</b> medan WheelLog säger "fartlarm 2". Begode-appen är nyare och skriven för just dessa hjul, så dess tolkning visas först.<br><br>
+    <b>Det som inte går att se:</b> om BMS-summern piper för överström (överströmsskydd rapporteras inte som eget fält) eller exakt vilken summer som låter. Därför är knappen och dina anteckningar om mönster och riktning viktiga – de gör det möjligt att para ihop ljudet med datan.</p>
+    <h2 style="margin-top:10px">Kända pipmönster</h2><table id="beeppatterns"></table>
+    <h2 style="margin-top:10px">Larmbyte 14 i paket 4</h2><table id="beepbits"></table>
+    <p class="note">Källor: <a style="color:var(--acc)" target="_blank" href="https://forum.electricunicycle.org/topic/4258-gotway-alarm-beep-codes/">EUC Forum – GotWay alarm beep codes</a> ·
+    <a style="color:var(--acc)" target="_blank" href="https://alienrides.com/pages/begode-extreme-bull-battery-buzzing-beeping">Alien Rides – Begode battery buzzing</a> ·
+    <a style="color:var(--acc)" target="_blank" href="https://forum.electricunicycle.org/topic/25726-euc-alarm-app-hear-your-gotwaybegode-wheel-beeps/page/2/">EUC Alarm app (lyssnar på pipen med mikrofonen)</a> · Begode-appens felkoder (paket 4, byte 14) · WheelLog.</p></div>
+  <div class="card"><h2>Förslag framåt</h2><ol style="line-height:1.6;margin:0 0 0 18px">
+    <li><b>Mobilens mikrofon känner igen pipen</b> (som appen "EUC Alarm"): räknar pip per sekund och tidsmärker automatiskt – kopplar ljud till data utan att du behöver trycka. Hör till mobildelen.</li>
+    <li><b>Vibration i klockan/mobilen</b> med klartext ("Batteri B tappade strömmen – stanna") – pip är lätta att missa i trafik och vind.</li>
+    <li><b>Kontroll före tur</b>: en knapp som på 10 s kontrollerar båda paketens spänning, cellspridning, BMS-status och MOS innan du kör.</li>
+    <li><b>Provbänk med reservkortet</b>: koppla ett paket i taget och se vilka statusbitar som ändras när BMS-skyddet löser ut (utan att någon står på hjulet).</li>
+    <li><b>Lyssna på BMS-summern elektriskt</b>: en liten ljud-/spänningssensor på summerns ben skulle göra BMS-pipet synligt i appen (hårdvara, valfritt).</li></ol></div>
 </section>
 <section id="graphs">
   <div class="card"><h2>Grafer</h2><div id="grange"></div><div class="note">Historik sparad var 5:e sekund när hjulet är anslutet. Håll musen över en graf för värden; dra för att zooma, dubbelklicka för att återställa.</div></div>
@@ -225,7 +262,7 @@ function renderBus(b){if(!b||b.bus_v==null)return;
     +kv('Hälsoindex (gissat)',b.index_guess!=null?fmt(b.index_guess,0):'<span style="font-size:14px">kräver referens (körning)</span>')
     +kv('Tomgångsspänning (skattad)',fmt(S.ocv_v,2,'V'));
   $('busrate').textContent=`Live via push: ${(busN/((Date.now()-busT0)/1000)).toFixed(1)} uppdateringar/s (hjulet skickar max ~3,3/s).`;}
-try{const es=new EventSource('/api/stream');es.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.bus)renderBus(m.bus);if(m.alarms)renderAlarms(m.alarms)}catch(x){}}}catch(e){}
+try{const es=new EventSource('/api/stream');es.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.bus)renderBus(m.bus);if(m.alarms)renderAlarms(m.alarms);if(m.beeps&&$('beeps').classList.contains('act'))beeptick()}catch(x){}}}catch(e){}
 async function cellstick(){try{const c=await fetch('/api/cells_fast').then(r=>r.json());
   const ks=Object.keys(c.cells).sort((a,b)=>a.localeCompare(b,'sv',{numeric:true}));
   $('cfast').innerHTML=ks.length?`<div class="cells">${ks.map(k=>{const x=c.cells[k];return `<div class="cell ${c.flag.includes(k)?'lo':''}" title="${k}: ${x.n?('n='+x.n+', strömspridning '+x.i_std+' A'):'för lite strömvariation'}">${k}<br>${(x.mv/1000).toFixed(3)}<br><span style="color:var(--mut)">${x.age_s}s</span><br>${x.mohm!=null?x.mohm.toFixed(1)+' mΩ':'–'}</div>`}).join('')}</div>`
@@ -500,6 +537,20 @@ async function settick(force){try{if(!force&&$('settings').contains(document.act
     +(d.errors.length?`<br><span class="bad">Fel: ${d.errors.join('; ')}</span>`:'')}catch(e){}}
 async function setSave(){const b={};document.querySelectorAll('[id^=st_]').forEach(e=>b[e.id.slice(3)]=e.value);
   const r=await post('/api/settings',b);$('setnote').innerHTML=r.ok?'✅ sparat':'⛔ '+r.error;settick(true)}
+async function beepMark(){const pat=$('beeppat').value,n=$('beepnote').value;
+  const r=await post('/api/beeps/mark',{note:[pat,n].filter(x=>x).join(' – ')});
+  $('beepmarknote').innerHTML=r.ok?`✅ Markerat ${new Date(r.ts*1000).toLocaleTimeString('sv-SE')} – svart låda sparas om 15 s.`:'⛔ '+(r.error||'fel');setTimeout(beeptick,16000)}
+async function beeptick(){try{const b=await fetch('/api/beeps').then(r=>r.json());
+  $('beepactive').innerHTML=!b.connected?'<span class="warn">Hjulet är inte anslutet – inget kan läsas just nu.</span>'
+    :b.active.length?b.active.map(a=>`<div class="bad">⛔ ${a.key}: <b>${a.value}</b></div>`).join(''):'<span class="ok">✅ Hjulet rapporterar inget larm just nu.</span> <span class="note" style="font-size:13px">Piper det ändå: tryck på knappen – det kan vara BMS-summern, som inte rapporteras direkt.</span>';
+  $('beepevents').innerHTML=b.events.length?'<tr><td>Tid</td><td>Vad</td><td>Från → till</td><td></td></tr>'+b.events.slice(0,60).map(e=>`<tr><td>${new Date(e.ts*1000).toLocaleTimeString('sv-SE')}</td>
+    <td>${e.key}<div class="note">${e.text}</div></td><td>${e.old??'—'} → <b class="${e.level==='alarm'&&e.new&&e.new!=='normal'?'bad':''}">${e.new??'—'}</b></td><td>${e.level==='alarm'?'⛔':e.level==='warn'?'⚠️':''}</td></tr>`).join('')
+    :'<tr><td class="note">Inga ändringar loggade sedan start.</td></tr>';
+  $('beepboxes').innerHTML=b.boxes.length?'<tr><td>Tid</td><td>Orsak</td><td>Händelser</td><td>Paket</td><td></td></tr>'+b.boxes.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleString('sv-SE')}</td><td>${x.reason}</td><td>${x.events}</td><td>${x.frames}</td><td><a href="/api/beeps/box/${x.name}" download>ladda ner</a></td></tr>`).join('')
+    :'<tr><td class="note">Inga svarta lådor än.</td></tr>';
+  if(!$('beeppatterns').innerHTML)$('beeppatterns').innerHTML='<tr><td>Summer</td><td>Mönster</td><td>Betydelse</td><td>Åtgärd</td><td>Syns i appens data?</td></tr>'+b.patterns.map(p=>`<tr><td>${p[0]}</td><td>${p[1]}</td><td><b>${p[2]}</b></td><td>${p[3]}</td><td class="note">${p[4]}</td></tr>`).join('');
+  if(!$('beepbits').innerHTML)$('beepbits').innerHTML='<tr><td>Bit</td><td>Begode-appen</td><td>WheelLog</td></tr>'+b.alert_bits.map(x=>`<tr><td><code>${x.bit}</code></td><td>${x.app}</td><td class="note">${x.wheellog}</td></tr>`).join('');
+}catch(e){}}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
 tick();logtick();
@@ -507,7 +558,7 @@ tick();logtick();
 (()=>{const h=location.hash;const m=h.match(/ride=(\d+)/);
   if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m){const md=h.match(/mode=(\w+)/);if(md)rideMode=md[1];setTimeout(()=>showRide(+m[1]),300)}}
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
-guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
+guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

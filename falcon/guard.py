@@ -125,8 +125,9 @@ class Guard:
 
     # ---------- wheel's own alert bits (p4 byte 14) ----------
     def _alert_checks(self, alerts: list[str]) -> list[Finding]:
-        severe = {"fel på hallsensor", "övertemperatur", "överspänning", "låg spänning"}
-        return [Finding("alarm" if a in severe else "info" if a == "transportläge" else "warn",
+        severe = {"fel på hallsensor", "övertemperatur", "överspänning", "låg spänning",
+                  "MOS bränd / fartlarm 2", "gyrofel / fartlarm 1", "strömfel / hög effekt"}
+        return [Finding("alarm" if a in severe else "info" if a.startswith("låst") else "warn",
                         "wheel_alert", "hjulet", f"Hjulet larmar: {a}") for a in alerts]
 
     # ---------- 1-3: shunt / current sharing ----------

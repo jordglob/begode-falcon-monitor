@@ -43,6 +43,7 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | Position & turer | GPS status; rides on a map coloured by **speed / elevation / grade / power**, elevation + power profiles, climbs, energy vs elevation (see [docs/elevation.md](docs/elevation.md)), wheel-vs-GPS speed plausibility, GPX/CSV export |
 | Alla parametrar | **every decoded field of every packet** with unit, status (✅ ⚠️ ❓), raw bytes, update period |
 | Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff; **settings backup** (manual, daily, on change) with download and restore |
+| Pip-larm | **why is the wheel beeping?** live causes, event log, black box, "I hear beeping now" button, instructions and investigation – see [docs/beeps.md](docs/beeps.md) |
 | Grafer | voltage, current, cells, temperatures, sag, speed over 1 h – 30 days |
 | Inställningar | weights (for the physics comparison), elevation source, terrain model folder, thresholds; links to Geotorget |
 | Logg | events, connection stability, **release the link** for the phone app |
@@ -71,6 +72,7 @@ an open connection needs raw HCI access (root) and is therefore not shown.
 | `falcon/export.py` | GPX / CSV export |
 | `falcon/elevation.py` | terrain tiles (.hgt, GeoTIFF incl. SWEREF 99 TM), GPS altitude filter, climb hysteresis |
 | `falcon/rideanalysis.py` | elevation/energy analysis per ride, regression, physics comparison |
+| `falcon/beeps.py` | beep watch: state changes at packet rate, black box, beep patterns |
 | `falcon/settings.py` | user settings (weights etc.) |
 | `tools/lm_fetch.py`, `tools/dem_fetch.py` | download Lantmäteriet / Copernicus terrain tiles |
 | `falcon/store.py` | SQLite history |

@@ -2,6 +2,16 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.14.0 – 2026-10-03
+- **Pip-larm tab – "Varför piper det?"**: every change of the alert bits, BMS protection /
+  voltage / temperature state, MOS, lowest-cell band, pack without current and PWM zone is
+  logged at packet rate; **black box** (30 s before + 15 s after, all raw frames) on every
+  alarm-level change and on **"Jag hör pip nu!"** (with beep pattern and note, works from the
+  phone); instructions, an investigation of the two buzzers (mainboard vs BMS), known beep
+  patterns, the alert-bit table and suggestions. See `docs/beeps.md`.
+- Alert byte 14 now uses the official app's meanings first (0x02 = **MOS burned**, 0x04 = gyro
+  fault, 0x01 = power fault, 0x80 = locked) with WheelLog's as second reading; treated as alarms.
+
 ## 0.13.0 – 2026-10-03
 - **Elevation and energy per ride** (computed afterwards, cached): climbs/descents by
   hysteresis, ascent/descent, steepest grade, energy per climb and per road class, Wh per metre
