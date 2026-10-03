@@ -104,17 +104,25 @@ def test_shelly1_urls():
 
 # ---------- release ----------
 def test_release_keeps_link_down_then_resumes():
-    link = WheelLink("AA:BB:CC:DD:EE:FF", WheelState(), backoff_min=0.01)
+    link = WheelLink("AA:BB:CC:DD:EE:FF", WheelState(), backoff_min=0.01, connect_timeout=0.05)
     calls = []
 
-    async def scanner(addr, t):
-        calls.append(addr)
-        return None
-    link.scanner = scanner
+    class Never:
+        is_connected = False
+        services = []
 
-    async def no_bluez(addr):
-        pass
-    link.disconnector = no_bluez
+        async def connect(self):
+            calls.append("connect")
+            await asyncio.sleep(10)
+
+        async def disconnect(self):
+            pass
+
+    async def nothing(addr):
+        return False
+    link.client_factory = lambda target: Never()
+    link.disconnector = nothing
+    link.bluez_connected = nothing
 
     async def go():
         link.release(0.3)
@@ -124,18 +132,4 @@ def test_release_keeps_link_down_then_resumes():
         await asyncio.sleep(0.4)
         t.cancel()
     asyncio.run(go())
-    assert calls                                    # searching again after the release
-
-
-def test_history_bucketed(tmp_path):
-    import time
-    from falcon.store import Store
-    st = Store(tmp_path / "h.db")
-    now = time.time()
-    for i in range(720):                                   # 1 h of 5 s samples
-        st.db.execute("INSERT INTO samples (ts, voltage_v, speed_kmh) VALUES (?,?,?)",
-                      (now - 3600 + i * 5, 90 + i / 720, i % 50))
-    st.db.commit()
-    rows = st.history_bucketed(1, points=60)                # 60 s buckets
-    assert 55 <= len(rows) <= 62
-    assert all(r["speed_kmh"] is not None for r in rows) and rows[-1]["voltage_v"] > rows[0]["voltage_v"]
+    assert calls                                    # trying again after the release

@@ -2,6 +2,27 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.13.0 – 2026-10-03
+- **Elevation and energy per ride** (computed afterwards, cached): climbs/descents by
+  hysteresis, ascent/descent, steepest grade, energy per climb and per road class, Wh per metre
+  of height, lowest safety margin per climb, regression separating climbing from speed, and a
+  physics comparison (climbing efficiency, share recovered downhill) when a total mass is set.
+- Map colour modes **speed / elevation / grade / power**; elevation and power profiles synced
+  with a map marker; climb list that zooms map and profiles; Wh/km per grade over all rides.
+- **Terrain models**: Lantmäteriet Markhöjdmodell grid 1+ (1 m ground model, read directly in
+  SWEREF 99 TM – projection in pure Python, matches pyproj < 1 mm), Copernicus GLO-30,
+  `.hgt`; `tools/lm_fetch.py` (Geotorget account, e.g. `--area stockholm,nacka,huddinge`:
+  184 tiles, 1.6 GB) and `tools/dem_fetch.py`. Links to Geotorget in the app.
+- **Inställningar** tab: rider / gear / wheel weight, elevation source, DEM folder, climb
+  thresholds, GPS storage intervals.
+- Energy integrated on every packet (0.3 s) and stored with each GPS point (consumption and
+  regeneration counters, max PWM, average current, coverage); GPS points every 2 s while moving.
+- **BLE reconnection**: direct connect to a known address (BlueZ connects on the first
+  advertisement heard – no scan windows with gaps); scanning only for an unknown/forgotten
+  device; backoff only after an established connection ended; half-open BlueZ links detected
+  with `bluetoothctl info`; time-to-connect statistics. Live: 22 s at −90 dBm (was ~4 min).
+- `docs/elevation.md`.
+
 ## 0.12.0 – 2026-10-03
 - **Speed plausibility**: wheel speed vs GPS speed (only where the GPS fix is good: ≥5
   satellites, HDOP ≤2.5). *Spin* = the wheel turns clearly faster than the GPS moves (lifted,

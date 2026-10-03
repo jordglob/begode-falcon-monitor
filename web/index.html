@@ -35,7 +35,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
 <span id="sig" style="font-size:13px;color:var(--mut)"></span>
 <span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="log">Logg</button></nav>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="settings">Inställningar</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
   <div class="card" id="alarmbar" style="display:none"></div>
@@ -74,8 +74,17 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <section id="pos">
   <div class="card"><h2>Position</h2><div class="grid" id="gpsmain"></div><div class="note" id="gpsnote"></div></div>
   <div class="card"><h2>Turer</h2><table id="ridelist"></table>
-    <div id="ridemap" style="height:420px;border-radius:10px;margin-top:10px;display:none"></div>
+    <div id="ridemodes" style="margin-top:10px;display:none"></div>
+    <div id="ridemap" style="height:420px;border-radius:10px;margin-top:6px;display:none"></div>
     <div id="ridelegend" class="note" style="margin-top:6px"></div><div id="ridestats" class="grid" style="margin-top:8px"></div></div>
+  <div class="card" id="elevcard" style="display:none"><h2>Höjd och energi</h2><div class="note" id="elevsrc"></div>
+    <div class="grid" id="elevtot" style="margin:8px 0"></div>
+    <div id="profelev"></div><div id="profpow"></div>
+    <div class="note">Profilerna följer kartan: håll musen över profilen så visar en markör var på kartan du är. Dra för att zooma.</div>
+    <h2 style="margin-top:14px">Backar</h2><table id="climbs"></table>
+    <h2 style="margin-top:14px">Energi per vägtyp</h2><table id="perclass"></table><div class="note" id="physnote"></div></div>
+  <div class="card"><h2>Lutning ↔ energi (alla turer)</h2><table id="gradeenergy"></table>
+    <div class="note">Genomsnittlig förbrukning per km i varje lutningsintervall, från alla analyserade turer. Byggs upp ju mer du kör med datorn med.</div></div>
   <div class="card"><h2>Satelliter</h2><table id="gpssats"></table></div>
   <div class="card"><h2>Statistik</h2><div class="grid" id="gpsstats"></div>
     <div class="note">Positioner sparas var 5:e sekund tillsammans med hjulets egen fart – det blir turerna på kartan ovan.</div></div>
@@ -98,6 +107,17 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
     <div class="note">✅ = hjulet rapporterar värdet tillbaka och resultatet verifieras · ⚠️ = skickas två gånger men kan inte läsas tillbaka än – resultatet visar i stället vilka fält som ändrades. Tiltback finns inte med förrän det är kartlagt var hjulet rapporterar det.</div></div>
   <div class="card"><h2>Kommandologg</h2><table id="ctllog"></table></div>
 </section>
+<section id="settings">
+  <div class="card"><h2>Inställningar</h2><table id="setform"></table><div class="note" id="setnote"></div></div>
+  <div class="card"><h2>Terrängmodell (höjd)</h2><div id="demstat"></div>
+    <div class="note"><b>Bäst i Sverige: Lantmäteriets markhöjdmodell</b> (1 m, marken utan träd och hus, gratis, CC BY 4.0).
+    Kräver ett gratis konto på <a href="https://geotorget.lantmateriet.se" target="_blank" style="color:var(--acc)">Geotorget</a>
+    (<a href="https://geotorget.lantmateriet.se/geodataprodukter/markhojdmodell-nedladdning-api" target="_blank" style="color:var(--acc)">Markhöjdmodell Nedladdning</a>).
+    Skriv inloggningen i <code>~/.config/begode-falcon/lantmateriet.env</code> (<code>LM_USER=…</code>, <code>LM_PASS=…</code>) och kör:<br>
+    <code>.venv/bin/python tools/lm_fetch.py --area stockholm,nacka,huddinge</code> (184 rutor, 1,6 GB)<br>
+    Utan konto: <code>tools/dem_fetch.py LAT_MIN LON_MIN LAT_MAX LON_MAX</code> hämtar Copernicus GLO-30 (30 m, ytmodell – träd och hus räknas som höjd).
+    Ingen position skickas någonstans; bara områdets gränser. Höjddata: © Lantmäteriet (CC BY 4.0) / © Copernicus.</div></div>
+</section>
 <section id="log"><div class="card"><h2>Händelser</h2><table id="events"></table></div>
   <div class="card"><h2>Släpp hjulet till mobilappen</h2><div id="relbtns"></div>
     <div class="note">Hjulet tar bara en Bluetooth-anslutning. Släpp den en stund för att använda Begode-appen; servern tar tillbaka hjulet när tiden gått ut eller när du trycker "Ta tillbaka".</div></div>
@@ -110,7 +130,7 @@ const fmt=(v,d=1,u='')=>v==null||Number.isNaN(v)?'—':(typeof v==='number'?v.to
 const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('act'));
-  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);
+  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);if(b.dataset.t==='settings')settick(true);
   try{localStorage.setItem('tab',b.dataset.t)}catch(e){}});
 try{const t=localStorage.getItem('tab');if(t)document.querySelector(`nav button[data-t=${t}]`)?.click()}catch(e){}
 
@@ -305,31 +325,94 @@ async function ridestick(force){try{if(!$('pos').classList.contains('act'))retur
     <td><button class="btn" onclick="showRide(${x.id})">Visa på karta</button> <a class="note" href="/api/rides/${x.id}.gpx" download>GPX</a> · <a class="note" href="/api/rides/${x.id}.csv" download>CSV</a></td></tr>`).join('')
     :'<tr><td class="note">Inga turer ännu. En tur sparas när GPS:en rör sig minst 30 s över 3 km/h och minst 100 m.</td></tr>';
 }catch(e){}}
-async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(null,'','#ride='+id)}catch(e){}
-  try{await loadLeaflet()}catch(e){$('ridelegend').textContent='Kartan kunde inte laddas (kräver internet för kartbilder).';return}
-  const r=await fetch('/api/rides/'+id).then(r=>r.json());if(!r.track)return;
-  const el=$('ridemap');el.style.display='block';
-  if(!LMAP){LMAP=L.map(el);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(LMAP)}
+const DIV_DOWN=['#0d366b','#1c5cab','#3987e5','#86b6ef'],DIV_MID='#9aa0a6',DIV_UP=['#f6c3a6','#f09a6b','#eb6834','#c4501f','#8f3a16'];
+function divColor(v,lim){if(v==null)return DIV_MID;const x=Math.max(-1,Math.min(1,v/lim));if(Math.abs(x)<0.08)return DIV_MID;
+  if(x<0){const i=Math.min(DIV_DOWN.length-1,Math.floor((1+x)*DIV_DOWN.length));return DIV_DOWN[i]}
+  return DIV_UP[Math.min(DIV_UP.length-1,Math.floor(x*DIV_UP.length))]}
+let rideMode='speed',rideData=null,rideAna=null,rideMarker=null,profPlots=[];
+function setRideMode(m){rideMode=m;drawRide()}
+function drawRide(){if(!rideData||!LMAP)return;const T=rideData.track,P=(rideAna&&rideAna.per_point)||[];
   if(LLAYER)LLAYER.remove();LLAYER=L.layerGroup().addTo(LMAP);
-  const T=r.track,vmax=Math.max(10,...T.map(p=>p[2]||0)),step=vmax/RAMP.length;
-  const col=v=>RAMP[Math.min(RAMP.length-1,Math.floor((v||0)/step))];
-  L.polyline(T.map(p=>[p[0],p[1]]),{color:'#fff',weight:9,opacity:.9}).addTo(LLAYER);          // surface casing
-  for(let i=1;i<T.length;i++){const a=T[i-1],b=T[i],v=b[2];
-    L.polyline([[a[0],a[1]],[b[0],b[1]]],{color:col(v),weight:6,opacity:1,lineCap:'round'})
-     .bindTooltip(`${v!=null?v.toFixed(1)+' km/h':'—'} · ${new Date(b[3]*1000).toLocaleTimeString('sv-SE')}`,{sticky:true}).addTo(LLAYER)}
-  // speed plausibility: dashed overlay where wheel and GPS disagree
+  const modes={speed:'Fart',elev:'Höjd',grade:'Lutning',power:'Effekt'};
+  $('ridemodes').style.display='block';
+  $('ridemodes').innerHTML='Färga spåret efter: '+Object.entries(modes).map(([k,l])=>`<button class="btn ${k===rideMode?'go':''}" ${k!=='speed'&&!(rideAna&&rideAna.ok)?'disabled':''} onclick="setRideMode('${k}')">${l}</button>`).join('');
+  let col,legend;
+  if(rideMode==='speed'){const vmax=Math.max(10,...T.map(p=>p[2]||0)),st=vmax/RAMP.length;col=i=>RAMP[Math.min(RAMP.length-1,Math.floor((T[i][2]||0)/st))];
+    legend='Fart: '+RAMP.map(c=>`<span style="display:inline-block;width:22px;height:10px;background:${c};vertical-align:middle"></span>`).join('')+` 0 → ${vmax.toFixed(0)} km/h (ljus = långsamt, mörk = snabbt)`}
+  else if(rideMode==='elev'){const es=P.map(p=>p[0]),lo=Math.min(...es),hi=Math.max(...es),st=Math.max(1,(hi-lo))/RAMP.length;
+    col=i=>RAMP[Math.min(RAMP.length-1,Math.floor(((P[i]||[lo])[0]-lo)/st))];
+    legend='Höjd: '+RAMP.map(c=>`<span style="display:inline-block;width:22px;height:10px;background:${c};vertical-align:middle"></span>`).join('')+` ${lo.toFixed(0)} → ${hi.toFixed(0)} m (ljus = lågt, mörk = högt)`}
+  else if(rideMode==='grade'){col=i=>divColor((P[i]||[])[1],10);
+    legend='Lutning: '+[...DIV_DOWN,DIV_MID,...DIV_UP].map(c=>`<span style="display:inline-block;width:18px;height:10px;background:${c};vertical-align:middle"></span>`).join('')+' −10 % nedför (blå) · plant (grått) · +10 % uppför (orange)'}
+  else{const pmax=Math.max(500,...P.map(p=>Math.abs(p[2]||0)));col=i=>divColor((P[i]||[])[2],pmax);
+    legend='Effekt: '+[...DIV_DOWN,DIV_MID,...DIV_UP].map(c=>`<span style="display:inline-block;width:18px;height:10px;background:${c};vertical-align:middle"></span>`).join('')+` återvinning (blå) · 0 (grått) · förbrukning (orange), ±${pmax.toFixed(0)} W`}
+  L.polyline(T.map(p=>[p[0],p[1]]),{color:'#fff',weight:9,opacity:.9}).addTo(LLAYER);
+  for(let i=1;i<T.length;i++){const a=T[i-1],b=T[i],pp=P[i]||[];
+    L.polyline([[a[0],a[1]],[b[0],b[1]]],{color:col(i),weight:6,opacity:1,lineCap:'round'})
+     .bindTooltip(`${b[2]!=null?b[2].toFixed(1)+' km/h':'—'}${pp[0]!=null?' · '+pp[0]+' m':''}${pp[1]!=null?' · '+pp[1]+' %':''}${pp[2]!=null?' · '+pp[2]+' W':''} · ${new Date(b[3]*1000).toLocaleTimeString('sv-SE')}`,{sticky:true})
+     .on('mouseover',()=>profCursorAtTs(b[3])).addTo(LLAYER)}
   const PL={spin:{c:'#d95926',t:'Hjulet snurrar fortare än GPS:en rör sig (lyft, slirar)'},carried:{c:'#9085e9',t:'GPS:en rör sig men hjulet står (bärs, i bil)'}};
   for(let i=1;i<T.length;i++){const a=T[i-1],b=T[i],f=b[4];if(PL[f])
     L.polyline([[a[0],a[1]],[b[0],b[1]]],{color:PL[f].c,weight:12,opacity:.55,dashArray:'6 6'})
-     .bindTooltip(`${PL[f].t}<br>hjul ${b[5]??'—'} km/h · GPS ${b[6]??'—'} km/h · ${new Date(b[3]*1000).toLocaleTimeString('sv-SE')}`,{sticky:true}).addTo(LLAYER)}
+     .bindTooltip(`${PL[f].t}<br>hjul ${b[5]??'—'} km/h · GPS ${b[6]??'—'} km/h`,{sticky:true}).addTo(LLAYER)}
   L.circleMarker([T[0][0],T[0][1]],{radius:7,color:'#fff',weight:2,fillColor:'#1d5e33',fillOpacity:1}).bindTooltip('Start').addTo(LLAYER);
   L.circleMarker([T.at(-1)[0],T.at(-1)[1]],{radius:7,color:'#fff',weight:2,fillColor:'#7a1f1a',fillOpacity:1}).bindTooltip('Mål').addTo(LLAYER);
+  rideMarker=L.circleMarker([T[0][0],T[0][1]],{radius:8,color:'#000',weight:2,fillColor:'#fff',fillOpacity:1,opacity:0}).addTo(LLAYER);
+  $('ridelegend').innerHTML=legend+`<br>Fartrimlighet: <span style="display:inline-block;width:26px;height:6px;border-top:4px dashed #d95926;vertical-align:middle"></span> hjulet snurrar fortare än GPS &nbsp;<span style="display:inline-block;width:26px;height:6px;border-top:4px dashed #9085e9;vertical-align:middle"></span> GPS rör sig men hjulet står.`}
+function markerAtTs(ts){if(!rideData||!rideMarker)return;const T=rideData.track;let best=0,bd=1e18;
+  for(let i=0;i<T.length;i++){const d=Math.abs(T[i][3]-ts);if(d<bd){bd=d;best=i}}rideMarker.setLatLng([T[best][0],T[best][1]]).setStyle({opacity:1,fillOpacity:1})}
+function profCursorAtTs(ts){if(!rideAna||!profPlots.length)return;const pr=rideAna.profile;let best=0,bd=1e18;
+  for(let i=0;i<pr.length;i++){const d=Math.abs((pr[i][5]||0)-ts);if(d<bd){bd=d;best=i}}
+  profPlots.forEach(u=>{const x=u.valToPos(pr[best][0],'x');u.setCursor({left:x,top:20})})}
+async function renderAnalysis(id){$('elevcard').style.display='block';$('elevsrc').textContent='⏳ räknar …';
+  const a=await fetch(`/api/rides/${id}/analysis`).then(r=>r.json());rideAna=a;drawRide();
+  if(!a.ok){$('elevsrc').textContent='Ingen höjdanalys: '+(a.reason||a.error);return}
+  const t=a.totals,ph=a.physics,rg=a.regression;
+  $('elevsrc').innerHTML=a.source==='dem'?'Höjd: terrängmodell (bra)':'Höjd: GPS-höjd, utjämnad – <span class="warn">grov</span> (hämta terrängmodell under Inställningar)';
+  $('elevtot').innerHTML=kv('Höjdmeter upp',fmt(t.ascent_m,0,'m'))+kv('Höjdmeter ned',fmt(t.descent_m,0,'m'))+kv('Högst / lägst',`${fmt(t.max_elev_m,0)} / ${fmt(t.min_elev_m,0)} m`)
+    +kv('Brantast upp / ned',`${fmt(t.steepest_up_pct,1)} / ${fmt(t.steepest_down_pct,1)} %`)+kv('Energi ut',fmt(t.wh_out,0,'Wh'))+kv('Återvunnet',fmt(t.wh_regen,0,'Wh'))
+    +kv('Netto per km',fmt(t.wh_per_km,1,'Wh/km'))+kv('Backarnas extra energi',fmt(t.extra_climb_wh,0,'Wh'))
+    +kv('Uppför: Wh per höjdmeter',rg?fmt(rg.up_wh_per_m,2):fmt(t.climb_wh_per_m,2))+kv('Nedför: sparat per höjdmeter',rg?fmt(rg.down_wh_per_m,2,'Wh'):fmt(t.regen_per_m,2,'Wh'))
+    +kv('Energidata täcker',fmt(t.energy_coverage_pct,0,'%'));
+  const C=a.climbs;
+  $('climbs').innerHTML=C.length?'<tr><td></td><td>Från–till</td><td>Höjd</td><td>Längd</td><td>Snitt / max</td><td>Energi netto</td><td>Wh/höjdm</td><td>Effekt</td><td>Minsta marginal</td></tr>'+C.map((c,i)=>`<tr style="cursor:pointer" onclick="zoomClimb(${i})">
+    <td>${c.dir==='up'?'↗':'↘'}</td><td>${c.start_km.toFixed(2)}–${c.end_km.toFixed(2)} km</td><td>${c.dh_m>0?'+':''}${c.dh_m} m</td><td>${c.length_m.toFixed(0)} m</td>
+    <td>${fmt(c.avg_grade_pct,1)} / ${fmt(c.max_grade_pct,1)} %</td><td>${fmt(c.wh_net,1,'Wh')}</td><td>${fmt(c.wh_per_m,2)}</td><td>${fmt(c.avg_power_w,0,'W')}</td>
+    <td>${c.min_margin_pct!=null?`<span class="${c.min_margin_pct<=20?'bad':c.min_margin_pct<=30?'warn':'ok'}">${c.min_margin_pct} %</span>`:'—'}</td></tr>`).join('')
+    :'<tr><td class="note">Inga backar över tröskeln ('+a.threshold_m+' m).</td></tr>';
+  const PC=a.per_class,lbl={flat:'Plant (|lutning| < 1 %)',up:'Uppför',down:'Nedför'};
+  $('perclass').innerHTML='<tr><td></td><td>Sträcka</td><td>Ut</td><td>Återvunnet</td><td>Netto</td><td>Per km</td></tr>'+['flat','up','down'].map(k=>`<tr><td>${lbl[k]}</td><td>${fmt(PC[k].km,2,'km')}</td><td>${fmt(PC[k].wh_out,1,'Wh')}</td><td>${fmt(PC[k].wh_regen,1,'Wh')}</td><td>${fmt(PC[k].wh_net,1,'Wh')}</td><td>${fmt(PC[k].wh_per_km,1,'Wh/km')}</td></tr>`).join('');
+  $('physnote').innerHTML=ph?`Fysiken (total vikt ${ph.mass_kg} kg): lägesenergi ${ph.potential_up_wh} Wh uppför = ${ph.theory_wh_per_m} Wh per höjdmeter vid 100 % verkningsgrad.`
+    +(ph.climb_efficiency_regression_pct?` Uppskattad verkningsgrad uppför: <b>${ph.climb_efficiency_regression_pct} %</b>.`:'')
+    +(ph.descent_recovered_regression_pct!=null?` Nedför sparas <b>${ph.descent_recovered_regression_pct} %</b> av lägesenergin.`:'')
+    +' Värden över 100 % betyder att underlaget är för litet eller höjden för grov.'
+    :'Ange vikt under Inställningar för jämförelse med fysiken (lägesenergi m·g·h).';
+  await loadUplot();profPlots.forEach(u=>u.destroy());profPlots=[];$('profelev').innerHTML='';$('profpow').innerHTML='';
+  const pr=a.profile,xs=pr.map(r=>r[0]),w=Math.min(860,$('elevcard').clientWidth-30),ink=getComputedStyle(document.documentElement).getPropertyValue('--mut').trim()||'#9aa0a6';
+  const sync=uPlot.sync('ride');
+  const mk=(el,title,ys,unit,color)=>{const u=new uPlot({width:w,height:170,title,cursor:{sync:{key:sync.key},drag:{x:true,y:false}},legend:{show:false},
+    scales:{x:{time:false}},axes:[{stroke:ink,grid:{stroke:'#2a2f3a'},values:(u,sp)=>sp.map(v=>v.toFixed(1)+' km')},{stroke:ink,grid:{stroke:'#2a2f3a'},size:56,values:(u,sp)=>sp.map(v=>v+' '+unit)}],
+    series:[{},{stroke:color,width:2,fill:color+'33',points:{show:false}}],
+    hooks:{setCursor:[u=>{const i=u.cursor.idx;if(i!=null&&pr[i])markerAtTs(pr[i][5])}]}},[xs,ys],el);profPlots.push(u);return u};
+  mk($('profelev'),'Höjd',pr.map(r=>r[1]),'m','#3987e5');
+  mk($('profpow'),'Effekt (positiv = förbrukning, negativ = återvinning)',pr.map(r=>r[3]),'W','#d95926');
+}
+function zoomClimb(i){const c=rideAna.climbs[i],T=rideData.track;const sel=T.filter(p=>p[3]>=c.t0&&p[3]<=c.t1);
+  if(sel.length>1)LMAP.fitBounds(L.latLngBounds(sel.map(p=>[p[0],p[1]])),{padding:[30,30]});
+  profPlots.forEach(u=>u.setScale('x',{min:c.start_km,max:c.end_km}))}
+async function gradeEnergyTick(){try{const g=await fetch('/api/analysis/grade-energy').then(r=>r.json());
+  const mx=Math.max(1,...g.bins.map(b=>Math.abs(b.wh_per_km||0)));
+  $('gradeenergy').innerHTML=g.bins.length?'<tr><td>Lutning</td><td>Wh/km</td><td></td><td>Sträcka</td></tr>'+g.bins.map(b=>`<tr><td>${b.grade_pct>0?'+':''}${b.grade_pct} %</td><td>${fmt(b.wh_per_km,1)}</td>
+    <td style="width:45%"><div style="height:10px;border-radius:0 4px 4px 0;background:${divColor(b.grade_pct,10)};width:${b.wh_per_km!=null?Math.max(2,100*Math.abs(b.wh_per_km)/mx):0}%"></div></td><td class="note">${b.km} km</td></tr>`).join('')
+    :`<tr><td class="note">Inga analyserade turer ännu (${g.rides}).</td></tr>`}catch(e){}}
+async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(null,'','#ride='+id)}catch(e){}
+  try{await loadLeaflet()}catch(e){$('ridelegend').textContent='Kartan kunde inte laddas (kräver internet för kartbilder).';return}
+  const r=await fetch('/api/rides/'+id).then(r=>r.json());if(!r.track)return;rideData=r;rideAna=null;
+  const el=$('ridemap');el.style.display='block';
+  if(!LMAP){LMAP=L.map(el);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(LMAP)}
+  drawRide();const T=r.track;
   LMAP.invalidateSize();LMAP.fitBounds(L.latLngBounds(T.map(p=>[p[0],p[1]])),{padding:[20,20]});
-  $('ridelegend').innerHTML='Fart: '+RAMP.map((c,i)=>`<span style="display:inline-block;width:26px;height:10px;background:${c};vertical-align:middle"></span>`).join('')
-    +` &nbsp;0 → ${vmax.toFixed(0)} km/h (ljus = långsamt, mörk = snabbt). Håll musen över spåret för fart och tid.`
-    +`<br>Fartrimlighet: <span style="display:inline-block;width:26px;height:6px;border-top:4px dashed #d95926;vertical-align:middle"></span> hjulet snurrar fortare än GPS
-      &nbsp;<span style="display:inline-block;width:26px;height:6px;border-top:4px dashed #9085e9;vertical-align:middle"></span> GPS rör sig men hjulet står.
-      Kontrolleras bara där hjulets fart finns och GPS:en har ≥5 satelliter och HDOP ≤2,5.`;
+  renderAnalysis(id);gradeEnergyTick();
   $('ridestats').innerHTML=kv('Sträcka',fmt(r.distance_km,2,'km'))+kv('Tid i rörelse',dur(r.moving_s))+kv('Total tid',dur(r.duration_s))
     +kv('Maxfart',fmt(r.max_kmh,1,'km/h'))+kv('Snittfart i rörelse',fmt(r.avg_moving_kmh,1,'km/h'))+kv('Punkter',r.points)
     +kv('Hjulet snurrar fortare',r.spin_s?`<span class="warn">${r.spin_s} s</span>`:'0 s')+kv('Bärs / står still',r.carried_s?`<span class="warn">${r.carried_s} s</span>`:'0 s')
@@ -404,12 +487,25 @@ async function graphtick(force){if(!$('graphs').classList.contains('act'))return
           value:(u,v)=>v==null?'—':v.toFixed(d.u==='V'?2:d.u==='A'?1:0)+' '+d.u}))]};
     gplots.push(new uPlot(opts,[xs,...ys],card))}
 }
+async function settick(force){try{if(!force&&$('settings').contains(document.activeElement))return;
+  const S=await fetch('/api/settings').then(r=>r.json());
+  $('setform').innerHTML=S.fields.map(f=>{const v=S.values[f.id];let inp;
+    if(f.kind==='choice')inp=`<select id="st_${f.id}" ${S.local_client?'':'disabled'}>${Object.entries(f.choices).map(([k,l])=>`<option value="${k}" ${k===v?'selected':''}>${l}</option>`).join('')}</select>`;
+    else inp=`<input id="st_${f.id}" value="${v??''}" ${S.local_client?'':'disabled'} style="width:${f.kind==='text'?'320px':'90px'}">`;
+    return `<tr><td>${f.label}</td><td>${inp}</td><td class="note">${f.help}</td></tr>`}).join('')
+    +`<tr><td>Total vikt</td><td><b>${S.total_mass_kg!=null?S.total_mass_kg+' kg':'—'}</b></td><td class="note">förare + utrustning + hjul</td></tr>`
+    +`<tr><td></td><td><button class="btn go" ${S.local_client?'':'disabled'} onclick="setSave()">Spara</button></td><td class="note">${S.local_client?'':'Ändras bara från X230.'}</td></tr>`;
+  const d=await fetch('/api/dem').then(r=>r.json());
+  $('demstat').innerHTML=`Mapp: <code>${d.folder||'—'}</code><br>`+(d.tiles.length?`${d.tiles.length} rutor: ${d.tiles.join(', ')}`:'<span class="warn">Inga rutor – höjden tas från GPS (grov).</span>')
+    +(d.errors.length?`<br><span class="bad">Fel: ${d.errors.join('; ')}</span>`:'')}catch(e){}}
+async function setSave(){const b={};document.querySelectorAll('[id^=st_]').forEach(e=>b[e.id.slice(3)]=e.value);
+  const r=await post('/api/settings',b);$('setnote').innerHTML=r.ok?'✅ sparat':'⛔ '+r.error;settick(true)}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
 tick();logtick();
 // deep links: #pos opens the tab, #ride=<id> opens a ride on the map
 (()=>{const h=location.hash;const m=h.match(/ride=(\d+)/);
-  if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m)setTimeout(()=>showRide(+m[1]),300)}
+  if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m){const md=h.match(/mode=(\w+)/);if(md)rideMode=md[1];setTimeout(()=>showRide(+m[1]),300)}}
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
 guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>

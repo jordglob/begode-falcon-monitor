@@ -22,7 +22,10 @@ from .ble import WheelLink
 from .energy import energy_view
 from .guard import Guard, summary
 from .health import Health
-from .fastpath import BusTracker, CellRegression
+from .fastpath import BusTracker, CellRegression, EnergyCounter
+from . import settings as settings_mod
+from . import rideanalysis
+from .elevation import Dem
 from . import __version__
 from . import control as ctl
 from .verify import Verifier
@@ -48,6 +51,7 @@ SAMPLE_EVERY_S = 5
 
 state = WheelState()
 bus = BusTracker()
+energy = EnergyCounter()
 cellreg = CellRegression()
 events: deque = deque(maxlen=200)
 subscribers: set = set()
@@ -69,6 +73,8 @@ def _on_frame(f) -> None:
         _last_group_ts = ts
     elif f.type == 0:
         _publish({"bus": bus.on_p0(state.p0, state.p7, ts, store.baseline_sag_ohm())})
+        v = bus.bus_v(state.p0)
+        energy.add(ts, v, (state.p7 or {}).get("battery_current_a"), (state.p7 or {}).get("pwm_pct"))
     elif f.type in (2, 3):
         cellreg.on_bank(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()),
                         bus.current(state.p7))
@@ -77,19 +83,26 @@ def _on_frame(f) -> None:
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
 gate = ctl.ControlGate()          # OFF at every start
+SETTINGS = {**settings_mod.defaults(), **(store.get_json("settings") or {})}
+dem = Dem(SETTINGS.get("dem_dir"))
 GPS_ON = os.environ.get("FALCON_GPS", "auto") != "0"
 gps = GpsReader()
 _last_gps_store = 0.0
 
 
 def _on_gps_fix(s: dict) -> None:
-    """Store a GPS point every 5 s together with the wheel's own speed (future: rides on a map)."""
+    """Store a GPS point (every 2 s while moving, 5 s standing – see settings) with the wheel's
+    speed and the packet-rate energy counters, so energy between any two points is exact."""
     global _last_gps_store
     now = time.time()
-    if now - _last_gps_store >= 5:
+    fresh = link.connected and now - link.last_frame_ts < 3
+    wheel = (state.p0 or {}).get("speed_kmh") if fresh else None
+    moving = max(wheel or 0, s.get("speed_kmh") or 0) > 2.0
+    cfg = SETTINGS
+    every = cfg["gps_ride_interval_s"] if moving else cfg["gps_idle_interval_s"]
+    if now - _last_gps_store >= every:
         _last_gps_store = now
-        fresh = link.connected and time.time() - link.last_frame_ts < 3
-        store.add_gps(s, (state.p0 or {}).get("speed_kmh") if fresh else None)
+        store.add_gps(s, wheel, energy.take_interval(now) if fresh else None)
 
 
 gps.on_fix = _on_gps_fix
@@ -593,6 +606,80 @@ def api_export_samples(hours: float = 24):
     rows = store.history(hours, limit=200000)
     return PlainTextResponse(export_mod.samples_csv(rows), media_type="text/csv",
                              headers={"Content-Disposition": 'attachment; filename="falcon-telemetri.csv"'})
+
+
+@app.get("/api/settings")
+def api_settings(req: Request):
+    return {"values": SETTINGS, "fields": settings_mod.describe(),
+            "total_mass_kg": settings_mod.total_mass(SETTINGS), "local_client": gate.is_local(_host(req))}
+
+
+@app.post("/api/settings")
+async def api_settings_save(req: Request):
+    if not gate.is_local(_host(req)):
+        return _err(Exception("inställningar ändras bara från datorn som kör servern"))
+    try:
+        upd = settings_mod.validate(await req.json())
+    except (ValueError, TypeError) as e:
+        return _err(e, 400)
+    SETTINGS.update(upd)
+    store.set_json("settings", SETTINGS)
+    global dem
+    if "dem_dir" in upd:
+        dem = Dem(SETTINGS.get("dem_dir"))
+    log_event("⚙️ Inställningar sparade: " + ", ".join(f"{k}={v}" for k, v in upd.items()))
+    return {"ok": True, "values": SETTINGS, "total_mass_kg": settings_mod.total_mass(SETTINGS)}
+
+
+def _analysis_key() -> str:
+    return "|".join(str(x) for x in (SETTINGS.get("elevation_source"), SETTINGS.get("climb_threshold_dem_m"),
+                                      SETTINGS.get("climb_threshold_gps_m"), settings_mod.total_mass(SETTINGS),
+                                      len(dem.tiles)))
+
+
+def _ride_points(ride_id: int):
+    pts = rides_mod.load_points(store.db, ride_id - 1)
+    for r in rides_mod.segment(pts):
+        if int(r[0]["ts"]) == ride_id:
+            return r
+    return None
+
+
+def _analysis(ride_id: int, use_cache: bool = True):
+    key = _analysis_key()
+    if use_cache:
+        row = store.db.execute("SELECT result FROM ride_analysis WHERE ride_id=? AND version=? AND source=?",
+                               (ride_id, rideanalysis.ANALYSIS_VERSION, key)).fetchone()
+        if row:
+            return json.loads(row[0])
+    r = _ride_points(ride_id)
+    if r is None:
+        return None
+    res = rideanalysis.analyze(r, SETTINGS, dem, settings_mod.total_mass(SETTINGS))
+    store.db.execute("INSERT OR REPLACE INTO ride_analysis VALUES (?,?,?,?,?)",
+                     (ride_id, rideanalysis.ANALYSIS_VERSION, key, time.time(), json.dumps(res)))
+    store.db.commit()
+    return res
+
+
+@app.get("/api/rides/{ride_id:int}/analysis")
+def api_ride_analysis(ride_id: int, fresh: bool = False):
+    res = _analysis(ride_id, use_cache=not fresh)
+    if res is None:
+        return _err(Exception("turen finns inte"), 404)
+    return res
+
+
+@app.get("/api/analysis/grade-energy")
+def api_grade_energy(days: float = 365):
+    pts = rides_mod.load_points(store.db, time.time() - days * 86400)
+    analyses = [a for a in (_analysis(int(r[0]["ts"])) for r in rides_mod.segment(pts)) if a and a.get("ok")]
+    return {"rides": len(analyses), "bins": rideanalysis.grade_energy_bins(analyses)}
+
+
+@app.get("/api/dem")
+def api_dem():
+    return dem.describe()
 
 
 @app.get("/api/history")

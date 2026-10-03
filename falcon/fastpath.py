@@ -114,3 +114,49 @@ class CellRegression:
             flag = sorted([k for k, c in cells.items() if c.get("mohm") and c["mohm"] > 1.5 * med],
                           key=lambda k: -cells[k]["mohm"])
         return {"cells": cells, "flag": flag, "fitted": len(vals)}
+
+
+class EnergyCounter:
+    """Battery energy integrated on every packet (0.3 s): P = bus voltage × battery current.
+    Cumulative and monotonic: energy between two moments = counter difference, exact
+    regardless of how sparsely positions are stored. Consumption and regeneration apart."""
+
+    MAX_DT = 1.0      # a longer gap is not integrated (counted as missing coverage)
+
+    def __init__(self):
+        self.wh_out = 0.0
+        self.wh_regen = 0.0
+        self.last_ts: float | None = None
+        self._iv_pwm_max = None
+        self._iv_i_sum = 0.0
+        self._iv_dt = 0.0
+        self._iv_start: float | None = None
+
+    def add(self, ts: float, volt: float | None, amps: float | None, pwm: float | None) -> None:
+        if volt is None or amps is None:
+            return
+        if self._iv_start is None:
+            self._iv_start = ts
+        if self.last_ts is not None:
+            dt = ts - self.last_ts
+            if 0 < dt <= self.MAX_DT:
+                wh = volt * amps * dt / 3600.0
+                if wh >= 0:
+                    self.wh_out += wh
+                else:
+                    self.wh_regen += -wh
+                self._iv_i_sum += amps * dt
+                self._iv_dt += dt
+        self.last_ts = ts
+        if pwm is not None:
+            self._iv_pwm_max = pwm if self._iv_pwm_max is None else max(self._iv_pwm_max, pwm)
+
+    def take_interval(self, now: float) -> dict:
+        """Counters + interval stats since the previous call (stored with each GPS point)."""
+        span = now - self._iv_start if self._iv_start else 0.0
+        out = {"wh_out_cum": round(self.wh_out, 4), "wh_regen_cum": round(self.wh_regen, 4),
+               "pwm_max": self._iv_pwm_max,
+               "current_avg": round(self._iv_i_sum / self._iv_dt, 2) if self._iv_dt else None,
+               "data_cov": round(min(1.0, self._iv_dt / span), 2) if span > 0 else 0.0}
+        self._iv_pwm_max, self._iv_i_sum, self._iv_dt, self._iv_start = None, 0.0, 0.0, now
+        return out

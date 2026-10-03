@@ -4,12 +4,15 @@ The only write path is WheelLink.write(), called exclusively by falcon/control.p
 (which is off by default). Blocked commands are refused here as a last line of defence.
 
 Robustness (every step has a hard timeout, nothing can hang forever):
+  * known address: direct connect – BlueZ connects on the first advertisement it hears,
+    no scan windows with gaps; scanning only for an unknown/forgotten device,
   * the whole connect -> service discovery -> subscribe sequence is bounded,
   * a data watchdog drops the link when no frame arrives for STALE_S seconds
     (the wheel normally sends a notification every ~0.05 s),
   * after every failure the link is torn down on the BlueZ side too, so a
     half-open connection never keeps the wheel busy for us or the phone,
-  * reconnect backoff starts at 1 s and is capped at 10 s,
+  * backoff (1 → 10 s) only after an established connection ended – never while the
+    wheel is merely out of range or off,
   * after `forget_after` failed connects in a row, BlueZ is told to forget the
     device (clears a stuck 'Connected' state that disconnect cannot fix),
   * every drop is counted with its reason.
@@ -48,6 +51,23 @@ async def _run_bounded(cmd: list[str], timeout: float) -> None:
                 pass
 
 
+async def bluez_is_connected(address: str) -> bool:
+    """True if BlueZ itself believes it is connected to the wheel."""
+    try:
+        p = await asyncio.create_subprocess_exec("bluetoothctl", "info", address,
+                                                 stdin=asyncio.subprocess.DEVNULL,
+                                                 stdout=asyncio.subprocess.PIPE,
+                                                 stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(p.communicate(), 5)
+        return b"Connected: yes" in out
+    except BaseException:
+        try:
+            p.kill()
+        except Exception:
+            pass
+        return False
+
+
 async def bluez_disconnect(address: str) -> None:
     """Drop a (possibly half-open) BlueZ connection to the wheel."""
     await _run_bounded(["bluetoothctl", "disconnect", address], 5)
@@ -82,10 +102,10 @@ async def scan_by_address(address: str, timeout: float):
 
 class WheelLink:
     def __init__(self, address: str | None, state: WheelState, on_frame=None, *,
-                 connect_timeout: float = 30.0, stale_s: float = 8.0, scan_timeout: float = 15.0,
+                 connect_timeout: float = 25.0, stale_s: float = 8.0, scan_timeout: float = 15.0,
                  backoff_min: float = 1.0, backoff_max: float = 10.0, poll_s: float = 0.5,
                  client_factory=None, scanner=None, by_name_scanner=None, disconnector=None,
-                 forgetter=None, forget_after: int = 2):
+                 forgetter=None, forget_after: int = 2, bluez_state=None, clean_interval: float = 60.0):
         self.address = address
         self.address_seen: str | None = None
         self.state = state
@@ -103,6 +123,11 @@ class WheelLink:
         self.by_name_scanner = by_name_scanner or scan_by_name
         self.disconnector = disconnector or bluez_disconnect
         self.forgetter = forgetter or bluez_remove
+        self.bluez_connected = bluez_state or bluez_is_connected
+        self._needs_scan = False
+        self.clean_interval = clean_interval
+        self.attempt_started = 0.0
+        self.connect_times: deque = deque(maxlen=20)
         self.forget_after = forget_after
         self.fail_streak = 0
         self.forgets = 0
@@ -182,8 +207,9 @@ class WheelLink:
         if address:
             await self.disconnector(address)
 
-    async def _find(self):
-        addr = self.address or self.address_seen      # lock to the first wheel found
+    async def _scan_for_wheel(self):
+        """Scan (only when the address is unknown, or BlueZ has forgotten the device)."""
+        addr = self.address or self.address_seen
         if addr:
             return await asyncio.wait_for(self.scanner(addr, self.scan_timeout), self.scan_timeout + 10)
         dev = await asyncio.wait_for(self.by_name_scanner(self.scan_timeout), self.scan_timeout + 10)
@@ -203,37 +229,50 @@ class WheelLink:
     def paused(self) -> bool:
         return time.time() < self.paused_until
 
-    async def _session(self, client) -> str:
-        """Connect + subscribe (bounded), then watch the data flow. Returns the drop reason."""
+    async def _session(self, client, connect_timeout: float) -> tuple[bool, str]:
+        """Connect + subscribe (bounded), then watch the data flow.
+        Returns (reached_connected, reason it ended)."""
         async def setup():
             await client.connect()
             if "firmware" not in self.device_info:
                 await self._read_device_info(client)
             await client.start_notify(CHAR_UUID, self._notify)
+        t0 = time.time()
         try:
-            await asyncio.wait_for(setup(), self.connect_timeout)
-        except asyncio.TimeoutError:
-            return f"tidsgräns vid anslutning ({self.connect_timeout:.0f} s)"
+            await asyncio.wait_for(setup(), connect_timeout)
+        except (asyncio.TimeoutError, TimeoutError):
+            return False, f"ingen kontakt inom {time.time() - t0:.0f} s"
+        except Exception as e:
+            msg = str(e) or type(e).__name__
+            if "not found" in msg.lower():
+                return False, "okänd för BlueZ"
+            return False, f"anslutning misslyckades: {msg}"
         self.connected = True
         self.client = client
         self.connected_since = time.time()
         self.connects += 1
+        self.connect_times.append(round(self.connected_since - self.attempt_started, 1))
         self.status = "ansluten"
-        self._event("Bluetooth: ansluten")
+        self._event(f"Bluetooth: ansluten (efter {self.connected_since - self.attempt_started:.0f} s)")
         t_sub = time.time()
         while True:
             await asyncio.sleep(self.poll_s)
             if self.paused:
-                return "släppt för mobilappen"
+                return True, "släppt för mobilappen"
             if not client.is_connected:
-                return "frånkopplad (hjulet avstängt eller utom räckhåll)"
+                return True, "frånkopplad (hjulet avstängt eller utom räckhåll)"
             last = self.last_frame_ts if self.last_frame_ts > t_sub else t_sub
             if time.time() - last > self.stale_s:
-                return f"inga data på {self.stale_s:.0f} s"
+                return True, f"inga data på {self.stale_s:.0f} s"
 
     # ---------- main loop ----------
     async def run(self) -> None:
+        """Known address: connect DIRECTLY (BlueZ listens for the wheel's advertisement and
+        connects on the first one heard – no scan windows with gaps). Unknown address or a
+        device BlueZ has forgotten: scan. Waiting with backoff only after a connection
+        that was established and then failed, never while the wheel is simply not around."""
         backoff = self.backoff_min
+        last_clean = 0.0
         while True:
             client, address = None, self.address or self.address_seen
             if self.paused:
@@ -241,45 +280,63 @@ class WheelLink:
                 self.status = f"släppt – hjulet fritt för mobilappen ({left/60:.0f} min kvar)"
                 await asyncio.sleep(min(2.0, max(left, 0.1)))
                 continue
+            self.attempt_started = self.attempt_started or time.time()
             try:
-                self.status = "söker"
-                try:
-                    dev = await self._find()
-                except asyncio.TimeoutError:
-                    dev = None
-                if dev is None and address:
-                    # a half-open BlueZ link stops the wheel advertising: clear it
-                    await self.disconnector(address)
-                if dev is None:
-                    self.status = "hittar inte hjulet (avstängt, för långt bort eller anslutet till mobilen?)"
-                    await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, self.backoff_max)
-                    continue
-                address = getattr(dev, "address", None) or address
-                self.status = "ansluter"
-                client = self.client_factory(dev)
-                reason = await self._session(client)
-                had_data = self.connected
+                if not self.connected and address and time.time() - last_clean > self.clean_interval:
+                    # half-open BlueZ link (seen live) keeps the wheel from advertising
+                    if await self.bluez_connected(address):
+                        self._event("Bluetooth: BlueZ visade en halvöppen anslutning – kopplar ner den")
+                        await self.disconnector(address)
+                        self.fail_streak += 1
+                    last_clean = time.time()
+                target = address
+                if target is None or self._needs_scan:
+                    self.status = "söker"
+                    try:
+                        dev = await self._scan_for_wheel()
+                    except (asyncio.TimeoutError, TimeoutError):
+                        dev = None
+                    if dev is None:
+                        self.status = "hittar inte hjulet (avstängt, för långt bort eller anslutet till mobilen?)"
+                        await asyncio.sleep(0.2)             # keep listening, no gap
+                        continue
+                    self._needs_scan = False
+                    target, address = dev, getattr(dev, "address", None) or address
+                self.status = "väntar på hjulet" if not isinstance(target, str) else "väntar på hjulet (direktanslutning)"
+                client = self.client_factory(target)
+                ok, reason = await self._session(client, self.connect_timeout)
                 if reason == "släppt för mobilappen":
                     await self._teardown(client, address)
                     continue
+                if not ok:
+                    await self._teardown(client, address)
+                    if reason == "okänd för BlueZ":
+                        self._needs_scan = True          # repopulate BlueZ's cache by scanning
+                    elif reason.startswith("anslutning misslyckades"):
+                        self._drop(reason)
+                        self.fail_streak += 1
+                    else:                                # wheel simply not heard: keep waiting
+                        self.status = "hittar inte hjulet (avstängt, för långt bort eller anslutet till mobilen?)"
+                    if self.fail_streak >= self.forget_after and address:
+                        self._event(f"Bluetooth: {self.fail_streak} misslyckanden i rad – BlueZ får glömma hjulet")
+                        await self.forgetter(address)
+                        self.forgets += 1
+                        self.fail_streak = 0
+                        self._needs_scan = True
+                    await asyncio.sleep(0.2)
+                    continue
+                # it was connected and has now ended
                 self._drop(reason)
-                if had_data:
-                    backoff = self.backoff_min      # it worked a while: retry fast
-                    self.fail_streak = 0
-                else:
-                    self.fail_streak += 1
+                self.fail_streak = 0
+                self.attempt_started = 0.0
+                backoff = self.backoff_min
             except asyncio.CancelledError:
                 await self._teardown(client, address)
                 raise
             except Exception as e:                  # keep running whatever happens
                 self._drop(f"fel: {e}")
+                self.fail_streak += 1
             await self._teardown(client, address)
-            if self.fail_streak >= self.forget_after and address:
-                self._event(f"Bluetooth: {self.fail_streak} misslyckade anslutningar i rad – BlueZ får glömma hjulet")
-                await self.forgetter(address)
-                self.forgets += 1
-                self.fail_streak = 0
             self.status = f"återansluter om {backoff:.0f} s"
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, self.backoff_max)
@@ -298,6 +355,9 @@ class WheelLink:
                 "dropped_bytes": self.asm.dropped, "device_info": self.device_info,
                 "stability": {
                     "connects": self.connects,
+                    "connect_time_s": {"last": self.connect_times[-1] if self.connect_times else None,
+                                       "median": sorted(self.connect_times)[len(self.connect_times) // 2]
+                                       if self.connect_times else None},
                     "bluez_forgets": self.forgets,
                     "drops": dict(self.drops),
                     "last_drop": {"ts": self.last_drop[0], "reason": self.last_drop[1]} if self.last_drop else None,

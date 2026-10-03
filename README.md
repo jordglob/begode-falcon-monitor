@@ -40,10 +40,11 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | Live | **safety margin** (100 % − PWM, 3 s forecast), alarms with beep, speed, voltage, trip, odometer, wheel alerts, settings |
 | Energilager | imbalance guard, battery, cells (age + resistance per cell), BMS 1/2, bus (live via SSE, every 0.3 s), motor/electronics |
 | Batterihälsa | capacity and health, energy counters, wheel gauge vs ours, sessions, per-cell resistance, self-discharge, exposure |
-| Position & turer | GPS status; **rides on a map coloured by speed**, **wheel-vs-GPS speed plausibility** (spin / carried), GPX/CSV export |
+| Position & turer | GPS status; rides on a map coloured by **speed / elevation / grade / power**, elevation + power profiles, climbs, energy vs elevation (see [docs/elevation.md](docs/elevation.md)), wheel-vs-GPS speed plausibility, GPX/CSV export |
 | Alla parametrar | **every decoded field of every packet** with unit, status (✅ ⚠️ ❓), raw bytes, update period |
 | Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff; **settings backup** (manual, daily, on change) with download and restore |
 | Grafer | voltage, current, cells, temperatures, sag, speed over 1 h – 30 days |
+| Inställningar | weights (for the physics comparison), elevation source, terrain model folder, thresholds; links to Geotorget |
 | Logg | events, connection stability, **release the link** for the phone app |
 
 The header shows the app version and the signal strength (RSSI) from the last scan. Live RSSI of
@@ -68,6 +69,10 @@ an open connection needs raw HCI access (root) and is therefore not shown.
 | `falcon/alarms.py` | alarms, safety margin, PWM forecast |
 | `falcon/charging.py` | charge limit via Shelly plug |
 | `falcon/export.py` | GPX / CSV export |
+| `falcon/elevation.py` | terrain tiles (.hgt, GeoTIFF incl. SWEREF 99 TM), GPS altitude filter, climb hysteresis |
+| `falcon/rideanalysis.py` | elevation/energy analysis per ride, regression, physics comparison |
+| `falcon/settings.py` | user settings (weights etc.) |
+| `tools/lm_fetch.py`, `tools/dem_fetch.py` | download Lantmäteriet / Copernicus terrain tiles |
 | `falcon/store.py` | SQLite history |
 | `falcon/server.py` | FastAPI: `/api/state`, `/api/all`, `/api/version`, `/api/control*`, `/api/backup*`, `/api/gps`, `/api/rides`, `/api/energy`, `/api/bus`, `/api/stream` (SSE), `/api/cells_fast`, `/api/guard`, `/api/health`, `/api/history`, `/api/log` |
 | `web/index.html` | single-page UI |

@@ -117,7 +117,9 @@ def track(r: list[dict]) -> list[list]:
 
 
 def load_points(db, since: float = 0) -> list[dict]:
-    cols = ("ts", "lat", "lon", "speed_kmh", "wheel_speed_kmh", "sats", "hdop")
-    rows = db.execute("SELECT ts, lat, lon, speed_kmh, wheel_speed_kmh, sats, hdop FROM gps_samples "
+    have = {r[1] for r in db.execute("PRAGMA table_info(gps_samples)")}
+    cols = [c for c in ("ts", "lat", "lon", "speed_kmh", "wheel_speed_kmh", "sats", "hdop", "alt_m",
+                        "wh_out_cum", "wh_regen_cum", "pwm_max", "current_avg", "data_cov") if c in have]
+    rows = db.execute(f"SELECT {', '.join(cols)} FROM gps_samples "
                       "WHERE ts >= ? ORDER BY ts", (since,))
     return [dict(zip(cols, r)) for r in rows]

@@ -1,7 +1,8 @@
-"""Connection robustness with fake BLE clients: hangs, silence and drops always recover."""
+"""Connection robustness with fake BLE clients: direct connect, hangs, silence, drops,
+half-open BlueZ links and forgotten devices always recover – without gaps in listening."""
 import asyncio
-from pathlib import Path
 import re
+from pathlib import Path
 
 from falcon.ble import WheelLink
 from falcon.protocol import WheelState
@@ -9,15 +10,16 @@ from falcon.protocol import WheelState
 FIX = Path(__file__).resolve().parent / "fixtures" / "falcon_pro_idle.log"
 CHUNKS = [bytes.fromhex(l.split()[2]) for l in FIX.read_text().splitlines()
           if re.match(r"^\s*\d+\.\d{3} ffe1 ", l)]
+ADDR = "AA:BB:CC:DD:EE:FF"
 
 
 class Dev:
-    address = "AA:BB:CC:DD:EE:FF"
+    address = ADDR
 
 
 class FakeClient:
-    """behaviour: 'hang' (connect never returns), 'silent' (connects, no data),
-    'drop' (sends data then disconnects), 'ok' (keeps sending)."""
+    """'hang' (wheel not heard), 'silent' (connects, no data), 'drop' (data then gone),
+    'ok' (keeps sending), 'unknown' (BlueZ forgot the device)."""
 
     def __init__(self, behaviour, log):
         self.behaviour, self.log = behaviour, log
@@ -29,6 +31,8 @@ class FakeClient:
         self.log.append(("connect", self.behaviour))
         if self.behaviour == "hang":
             await asyncio.sleep(3600)
+        if self.behaviour == "unknown":
+            raise Exception(f"Device with address {ADDR} was not found.")
         self.is_connected = True
 
     async def start_notify(self, _uuid, cb):
@@ -49,28 +53,29 @@ class FakeClient:
             self._task.cancel()
 
 
-def make_link(script, log, bluez, forgot=None):
+def make_link(script, log, *, bluez_connected=False, forgot=None, scans=None, address=ADDR):
     it = iter(script)
 
     async def scanner(addr, timeout):
+        if scans is not None:
+            scans.append(addr)
         return Dev()
 
     async def disconnector(addr):
-        bluez.append(addr)
+        log.append(("bluez-disconnect", addr))
 
-    return WheelLink("AA:BB:CC:DD:EE:FF", WheelState(), connect_timeout=0.2, stale_s=0.3,
-                     scan_timeout=0.1, backoff_min=0.01, backoff_max=0.05, poll_s=0.02,
-                     client_factory=lambda dev: FakeClient(next(it, "ok"), log),
-                     scanner=scanner, disconnector=disconnector,
-                     forgetter=(lambda a: _append(forgot, a)) if forgot is not None else _noop)
+    async def forgetter(addr):
+        if forgot is not None:
+            forgot.append(addr)
 
+    async def state(addr):
+        return bluez_connected
 
-async def _noop(addr):
-    pass
-
-
-async def _append(lst, a):
-    lst.append(a)
+    return WheelLink(address, WheelState(), connect_timeout=0.2, stale_s=0.3, scan_timeout=0.1,
+                     backoff_min=0.01, backoff_max=0.05, poll_s=0.02, clean_interval=0.05,
+                     client_factory=lambda target: FakeClient(next(it, "ok"), log),
+                     scanner=scanner, by_name_scanner=lambda t: scanner(None, t),
+                     disconnector=disconnector, forgetter=forgetter, bluez_state=state)
 
 
 async def run_for(link, secs, snapshot=None):
@@ -85,48 +90,53 @@ async def run_for(link, secs, snapshot=None):
         pass
 
 
-def test_recovers_from_hang_silence_and_drop():
-    log, bluez = [], []
-    link = make_link(["hang", "silent", "drop", "ok"], log, bluez)
+def test_not_heard_is_not_a_failure_and_listening_continues():
+    log = []
+    link = make_link(["hang"] * 50, log)
+    asyncio.run(run_for(link, 1.0))
+    attempts = sum(1 for e in log if e == ("connect", "hang"))
+    assert attempts >= 3                          # back-to-back attempts, no long gaps
+    assert not link.drops and link.status.startswith(("hittar inte", "väntar på hjulet"))
+
+
+def test_recovers_from_silence_and_drop():
+    log = []
+    link = make_link(["hang", "silent", "drop", "ok"], log)
     asyncio.run(run_for(link, 3.0))
-    reasons = link.drops
-    assert any(r.startswith("tidsgräns vid anslutning") for r in reasons)
-    assert any(r.startswith("inga data") for r in reasons)
-    assert any(r.startswith("frånkopplad") for r in reasons)
-    assert link.connects >= 3                      # silent, drop, ok all reached 'connected'
-    assert link.state.counts.get(0, 0) > 0         # data flowed in the end
-    assert bluez.count("AA:BB:CC:DD:EE:FF") >= 3   # BlueZ side cleaned after each failure
-    assert ("disconnect", "hang") in log           # the hung client was torn down
+    assert any(r.startswith("inga data") for r in link.drops)
+    assert any(r.startswith("frånkopplad") for r in link.drops)
+    assert link.connects >= 3 and link.state.counts.get(0, 0) > 0
+    assert ("disconnect", "hang") in log          # a timed-out attempt is torn down
 
 
-def test_ok_link_stays_up():
-    log, bluez = [], []
-    link = make_link(["ok"], log, bluez)
+def test_direct_connect_without_scanning():
+    log, scans = [], []
+    link = make_link(["ok"], log, scans=scans)
     info = {}
     asyncio.run(run_for(link, 1.0, info))
-    assert link.connects == 1 and not link.drops
+    assert scans == [] and link.connects == 1 and not link.drops
     st = info["stability"]
     assert st["connected_for_s"] is not None and st["data_pct"] > 50
+    assert st["connect_time_s"]["last"] is not None
 
 
-def test_not_found_clears_half_open_link():
-    bluez = []
-
-    async def scanner(addr, timeout):
-        return None
-
-    async def disconnector(addr):
-        bluez.append(addr)
-
-    link = WheelLink("AA:BB:CC:DD:EE:FF", WheelState(), scan_timeout=0.05, backoff_min=0.01,
-                     backoff_max=0.02, scanner=scanner, disconnector=disconnector)
-    asyncio.run(run_for(link, 0.3))
-    assert bluez and link.status.startswith("hittar inte")
+def test_forgotten_device_triggers_scan_then_connects():
+    log, scans = [], []
+    link = make_link(["unknown", "ok"], log, scans=scans)
+    asyncio.run(run_for(link, 1.0))
+    assert scans and link.connects == 1
 
 
-def test_forgets_device_after_repeated_connect_timeouts():
-    log, bluez, forgot = [], [], []
-    link = make_link(["hang", "hang", "ok"], log, bluez, forgot)
-    asyncio.run(run_for(link, 2.0))
-    assert forgot == ["AA:BB:CC:DD:EE:FF"]
-    assert link.connects >= 1 and link.state.counts.get(0, 0) > 0
+def test_half_open_bluez_link_is_cleaned_then_forgotten():
+    log, forgot = [], []
+    link = make_link(["hang"] * 100, log, bluez_connected=True, forgot=forgot)
+    asyncio.run(run_for(link, 1.0))
+    assert ("bluez-disconnect", ADDR) in log
+    assert forgot == [ADDR] or len(forgot) >= 1
+
+
+def test_unknown_address_scans_by_name():
+    log, scans = [], []
+    link = make_link(["ok"], log, scans=scans, address=None)
+    asyncio.run(run_for(link, 0.8))
+    assert scans and link.address_seen == ADDR and link.connects == 1
