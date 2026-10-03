@@ -2,6 +2,13 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.15.1 – 2026-10-03
+- Fix: the **Inställningar** tab was empty – its section shared the id `settings` with a box on
+  the Live tab, so the tab button showed that box instead. Renamed to `prefs`; a test now
+  checks that all ids are unique and every tab button has its own section.
+- The page is served with `Cache-Control: no-store`, so the browser always loads the newest
+  version after an update.
+
 ## 0.15.0 – 2026-10-03
 - **Max values per ride** ("Maxvärden för turen"): max speed, lowest safety margin (highest
   PWM), highest current, highest power, highest regeneration, lowest voltage under load,

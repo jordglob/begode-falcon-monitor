@@ -229,7 +229,8 @@ app.mount("/vendor", StaticFiles(directory=ROOT / "web" / "vendor"), name="vendo
 
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "web" / "index.html")
+    # never cache the page itself: after an update the browser must load the new version
+    return FileResponse(ROOT / "web" / "index.html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/state")

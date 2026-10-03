@@ -213,3 +213,14 @@ def test_field_info_covers_all_decoded_fields(replay):
             if (t, name) in ((1, "group"), (1, "bms"), (1, "half")):
                 continue
             assert f"p{t}.{name}" in FIELD_INFO, f"p{t}.{name}"
+
+
+def test_web_page_has_unique_ids_and_tab_sections():
+    import re
+    from pathlib import Path
+    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
+    ids = re.findall(r'\bid="([^"$]+)"', html)
+    dup = sorted({i for i in ids if ids.count(i) > 1})
+    assert dup == [], dup
+    for tab in re.findall(r'<button data-t="([a-z]+)"', html):
+        assert f'<section id="{tab}"' in html, tab        # every tab button has its own section

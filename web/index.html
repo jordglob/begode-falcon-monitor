@@ -35,7 +35,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
 <span id="sig" style="font-size:13px;color:var(--mut)"></span>
 <span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="beeps">Pip-larm</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="settings">Inställningar</button><button data-t="log">Logg</button></nav>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="beeps">Pip-larm</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="prefs">Inställningar</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
   <div class="card" id="alarmbar" style="display:none"></div>
@@ -147,7 +147,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
     <div class="note">✅ = hjulet rapporterar värdet tillbaka och resultatet verifieras · ⚠️ = skickas två gånger men kan inte läsas tillbaka än – resultatet visar i stället vilka fält som ändrades. Tiltback finns inte med förrän det är kartlagt var hjulet rapporterar det.</div></div>
   <div class="card"><h2>Kommandologg</h2><table id="ctllog"></table></div>
 </section>
-<section id="settings">
+<section id="prefs">
   <div class="card"><h2>Inställningar</h2><table id="setform"></table><div class="note" id="setnote"></div></div>
   <div class="card"><h2>Terrängmodell (höjd)</h2><div id="demstat"></div>
     <div class="note"><b>Bäst i Sverige: Lantmäteriets markhöjdmodell</b> (1 m, marken utan träd och hus, gratis, CC BY 4.0).
@@ -170,7 +170,7 @@ const fmt=(v,d=1,u='')=>v==null||Number.isNaN(v)?'—':(typeof v==='number'?v.to
 const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('act'));
-  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);if(b.dataset.t==='settings')settick(true);
+  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);if(b.dataset.t==='prefs')settick(true);
   try{localStorage.setItem('tab',b.dataset.t)}catch(e){}});
 try{const t=localStorage.getItem('tab');if(t)document.querySelector(`nav button[data-t=${t}]`)?.click()}catch(e){}
 
@@ -543,7 +543,7 @@ async function graphtick(force){if(!$('graphs').classList.contains('act'))return
           value:(u,v)=>v==null?'—':v.toFixed(d.u==='V'?2:d.u==='A'?1:0)+' '+d.u}))]};
     gplots.push(new uPlot(opts,[xs,...ys],card))}
 }
-async function settick(force){try{if(!force&&$('settings').contains(document.activeElement))return;
+async function settick(force){try{if(!force&&$('prefs').contains(document.activeElement))return;
   const S=await fetch('/api/settings').then(r=>r.json());
   $('setform').innerHTML=S.fields.map(f=>{const v=S.values[f.id];let inp;
     if(f.kind==='choice')inp=`<select id="st_${f.id}" ${S.local_client?'':'disabled'}>${Object.entries(f.choices).map(([k,l])=>`<option value="${k}" ${k===v?'selected':''}>${l}</option>`).join('')}</select>`;
