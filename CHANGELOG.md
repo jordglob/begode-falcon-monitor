@@ -2,6 +2,18 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.20.0 – 2026-10-03
+- **Battery temperature vs available power**: R(T) learned from this pack (cell resistance ×
+  BMS temperature sensors, Arrhenius fit; cautious default until data spans 5 °C). Available
+  power from the weakest cell: P_max = 24 · 3.2 V · (V0 − 3.2 V)/R(T) · 2 strings; recommended
+  peak 70 %. Live card "Batteriets effektreserv" with a bar (now / recommended / max), max at
+  25 °C for comparison, what limits (battery or motor PWM), warm-up ETA.
+- Cold/hot battery notes, **hot spot** warning (one BMS or sensor clearly warmer – e.g. an
+  overheating shunt), **charging temperature guard** (< 5 °C / > 45 °C; stops a configured
+  Shelly plug), resistance normalised to 25 °C as ageing indicator.
+- Graphs: available vs used power, battery temperature, resistance at 25 °C; R(T) curve on the
+  Batterihälsa tab. History in `thermal_samples`.
+
 ## 0.19.0 – 2026-10-03
 - **Whole-pack comparison under load (all 48 cells)**: every cell value is referred to "no
   load" with its own measured internal resistance and the current at its own sample time, so

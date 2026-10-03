@@ -39,6 +39,8 @@ class Store:
                          ("power_max_w", "REAL"), ("regen_max_w", "REAL"), ("volt_min", "REAL")):
             if col not in have:
                 self.db.execute(f"ALTER TABLE gps_samples ADD COLUMN {col} {typ}")
+        self.db.execute("CREATE TABLE IF NOT EXISTS thermal_samples (ts REAL PRIMARY KEY, temp_c REAL, "
+                        "r_now_mohm REAL, r25_mohm REAL, pmax_w REAL, prec_w REAL, p_now_w REAL, v0_mv REAL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS beep_events (ts REAL, key TEXT, old TEXT, new TEXT, "
                         "level TEXT, text TEXT)")
         self.db.execute("CREATE TABLE IF NOT EXISTS ride_analysis (ride_id INTEGER, version INTEGER, "
@@ -156,3 +158,17 @@ class Store:
         cur = self.db.execute("SELECT * FROM samples WHERE ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+    def add_thermal(self, ts: float, t: dict, p_now: float | None, v0: float | None) -> None:
+        self.db.execute("INSERT OR REPLACE INTO thermal_samples VALUES (?,?,?,?,?,?,?,?)",
+                        (ts, t.get("temp_c"), t.get("r_now_mohm"), t.get("r25_mohm"), t.get("pmax_w"),
+                         t.get("prec_w"), p_now, v0))
+        self.db.commit()
+
+    def thermal_history(self, hours: float, points: int = 1500) -> list[dict]:
+        bucket = max(5.0, hours * 3600 / points)
+        cols = ["temp_c", "r_now_mohm", "r25_mohm", "pmax_w", "prec_w", "p_now_w", "v0_mv"]
+        agg = ", ".join(f"max({c})" if c == "p_now_w" else f"avg({c})" for c in cols)
+        cur = self.db.execute(f"SELECT avg(ts), {agg} FROM thermal_samples WHERE ts > ? "
+                              "GROUP BY CAST(ts / ? AS INTEGER) ORDER BY 1", (time.time() - hours * 3600, bucket))
+        return [dict(zip(["ts"] + cols, r)) for r in cur.fetchall()]

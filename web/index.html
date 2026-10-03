@@ -44,6 +44,8 @@ section.overlay.open{display:block}
 <section id="live" class="act">
   <div class="card" id="prefshint" style="display:none;outline:2px solid var(--warn)"></div>
   <div class="card" id="alarmbar" style="display:none"></div>
+  <div class="card" id="thermcard"><h2>Batteriets effektreserv</h2><div id="thermbar"></div><div class="grid" id="thermgrid" style="margin-top:8px"></div>
+    <div id="thermnotes"></div><div class="note">Tillgänglig effekt beräknas från den svagaste cellens spänning utan last och dess inre motstånd vid batteriets temperatur (inlärt). Rekommenderat = 70 % av max. Minsta tillåtna cellspänning under last: 3,2 V.</div></div>
   <div class="card"><h2>Säkerhetsmarginal</h2><div class="grid" id="margin"></div>
     <div class="note">Marginal = 100 % − PWM: hur mycket motorkraft som finns kvar. Vid 100 % PWM kan hjulet inte längre hålla upp dig. Prognosen räknar 3 s framåt från de senaste 3 sekunderna.</div></div>
   <div class="card"><h2>Färd</h2><div class="grid" id="ride"></div></div>
@@ -64,6 +66,8 @@ section.overlay.open{display:block}
 </section>
 <section id="health">
   <div class="card"><h2>Kapacitet och hälsa</h2><div class="grid" id="hcap"></div><div class="note" id="hcapnote"></div></div>
+  <div class="card"><h2>Batteritemperatur och inre motstånd</h2><div class="grid" id="rtgrid"></div><table id="rtcurve"></table>
+    <div class="note">Kurvan lärs från dina egna mätningar: cellernas inre motstånd mot batteriets temperatur. Tills mätningarna täcker minst 5 °C används en försiktig standardkurva (dubbelt motstånd vid 0 °C jämfört med 25 °C). Motstånd räknat till 25 °C är det bästa måttet på åldrande.</div></div>
   <div class="card"><h2>Laddningsgräns via smart kontakt</h2><div class="grid" id="chg"></div><div id="chgbtn" style="margin-top:8px"></div>
     <div class="note">Stoppar laddningen när medelcellen når gränsen (4,10 V ≈ 90 %) – skonar batteriet. Kräver en Shelly-kontakt (FALCON_PLUG_URL). Om data från hjulet försvinner lämnas kontakten orörd; laddaren stänger då själv vid fullt.</div></div>
   <div class="card"><h2>Export</h2><a class="btn" href="/api/export/samples.csv?hours=24" download>Telemetri 24 h (CSV)</a> <a class="btn" href="/api/export/samples.csv?hours=168" download>7 dygn (CSV)</a> <a class="btn" href="/api/export/samples.csv?hours=8760" download>Allt (CSV)</a></div>
@@ -546,6 +550,16 @@ async function graphtick(force){if(!$('graphs').classList.contains('act'))return
   if(!rows.length){$('gcharts').innerHTML='<div class="card note">Ingen historik i valt intervall.</div>';return}
   const xs=rows.map(r=>r.ts),w=Math.min(860,$('graphs').clientWidth-40);
   const css=getComputedStyle(document.documentElement),ink=css.getPropertyValue('--mut').trim()||'#9aa0a6';
+  const th=await fetch('/api/thermal/history?hours='+GH).then(r=>r.json()).catch(()=>[]);
+  const TDEF=[{k:['pmax_w','prec_w','p_now_w'],n:['Max effekt (beräknad)','Rekommenderat','Högsta effekt'],t:'Effekt: tillgänglig mot använd',u:'W',c:['#3987e5','#199e70','#d95926']},
+    {k:'temp_c',t:'Batteritemperatur (medel av 8 givare)',u:'°C',c:['#3987e5']},
+    {k:'r25_mohm',t:'Inre motstånd räknat till 25 °C (åldrande)',u:'mΩ',c:['#3987e5']}];
+  if(th.length>1){const txs=th.map(r=>r.ts);
+    for(const d of TDEF){const keys=Array.isArray(d.k)?d.k:[d.k];const ys=keys.map(k=>th.map(r=>r[k]==null?null:+r[k]));if(ys.every(a=>a.every(v=>v==null)))continue;
+      const card=document.createElement('div');card.className='card';card.innerHTML=`<h2>${d.t} (${d.u})</h2>`;$('gcharts').appendChild(card);
+      gplots.push(new uPlot({width:w,height:200,cursor:{drag:{x:true,y:false}},legend:{show:keys.length>1},scales:{x:{time:true}},
+        axes:[{stroke:ink,grid:{stroke:'#2a2f3a'},values:(u,sp)=>sp.map(v=>new Date(v*1000).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'}))},{stroke:ink,grid:{stroke:'#2a2f3a'},size:56}],
+        series:[{value:(u,v)=>v==null?'—':new Date(v*1000).toLocaleString('sv-SE')},...keys.map((k,i)=>({label:d.n?d.n[i]:d.t,stroke:d.c[i],width:2,points:{show:false},value:(u,v)=>v==null?'—':v.toFixed(d.u==='mΩ'?2:0)+' '+d.u}))]},[txs,...ys],card))}}
   for(const d of GDEF){const keys=Array.isArray(d.k)?d.k:[d.k];
     const ys=keys.map(k=>rows.map(r=>r[k]==null?null:+r[k]));if(ys.every(a=>a.every(v=>v==null)))continue;
     const card=document.createElement('div');card.className='card';card.innerHTML=`<h2>${d.t} (${d.u})</h2>`;$('gcharts').appendChild(card);
@@ -613,6 +627,24 @@ async function livetick(){try{if(!$('pos').classList.contains('act'))return;cons
   const last=tr.at(-1);L.circleMarker([last[0],last[1]],{radius:9,color:'#fff',weight:3,fillColor:'#d95926',fillOpacity:1}).bindTooltip('Du är här').addTo(LIVELAYER);
   LIVEMAP.invalidateSize();if(liveFollow)LIVEMAP.setView([last[0],last[1]],Math.max(LIVEMAP.getZoom()||0,16));
 }catch(e){}}
+async function thermtick(){try{const t=await fetch('/api/thermal').then(r=>r.json());
+  const cls={ok:'ok',warn:'warn',alarm:'bad'};
+  if(t.pmax_w){const pn=Math.max(0,(t.share_pct||0)*t.pmax_w/100),w=x=>Math.min(100,100*x/t.pmax_w);
+    $('thermbar').innerHTML=`<div style="position:relative;height:26px;border-radius:8px;background:#22262f;overflow:hidden">
+      <div style="position:absolute;left:0;top:0;bottom:0;width:${w(pn)}%;background:${t.level==='alarm'?'var(--bad)':t.level==='warn'?'var(--warn)':'#3987e5'}"></div>
+      <div style="position:absolute;top:0;bottom:0;left:${w(t.prec_w)}%;border-left:3px dashed #fff" title="rekommenderat"></div></div>
+      <div class="note">0 W — nu ${pn.toFixed(0)} W — rekommenderat ${t.prec_w} W (streckat) — max ${t.pmax_w} W</div>`}
+  else $('thermbar').innerHTML='<div class="note">Max effekt beräknas när cellernas inre motstånd är inlärt (kräver körning eller laddning).</div>';
+  $('thermgrid').innerHTML=kv('Batteritemperatur',t.temp_c!=null?`<span class="${t.temp_c<10||t.temp_c>45?'warn':'ok'}">${t.temp_c} °C</span>`:'—')
+    +kv('Max effekt nu',fmt(t.pmax_w,0,'W'))+kv('Rekommenderat max',fmt(t.prec_w,0,'W'))+kv('Max vid 25 °C',fmt(t.pmax_25c_w,0,'W'))
+    +kv('Begränsas av',t.limiter||'—')+kv('Uppvärmd (15 °C) om',t.warmup_min!=null?t.warmup_min+' min':'—');
+  $('thermnotes').innerHTML=(t.notes||[]).map(n=>`<div class="${cls[n[0]]}" style="font-size:16px;margin:4px 0">${n[0]==='alarm'?'⛔':'⚠️'} ${n[1]}</div>`).join('')
+    +(t.charge_note?`<div class="warn">🌡️ ${t.charge_note}</div>`:'');
+  if($('health').classList.contains('act')){const M=t.model||{};
+    $('rtgrid').innerHTML=kv('Kurva',M.fitted?'<span class="ok">inlärd</span>':'<span class="warn">standard (inlärning pågår)</span>')+kv('Mätpunkter',M.points)
+      +kv('Motstånd nu (svagaste cell)',fmt(t.r_now_mohm,2,'mΩ'))+kv('Räknat till 25 °C',fmt(t.r25_mohm,2,'mΩ'));
+    $('rtcurve').innerHTML=(M.curve||[]).length?'<tr><td>Temperatur</td>'+M.curve.map(c=>`<td>${c[0]} °C</td>`).join('')+'</tr><tr><td>Motstånd</td>'+M.curve.map(c=>`<td>${c[1].toFixed(2)}</td>`).join('')+'</tr>':''}
+}catch(e){}}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
 tick();logtick();
@@ -623,7 +655,7 @@ tick();logtick();
   if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m){const md=h.match(/mode=(\w+)/);if(md)rideMode=md[1];setTimeout(()=>showRide(+m[1]),300)}}
   else if(h==='#prefs')togglePrefs(true);
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
-guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);livetick();setInterval(livetick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
+guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);livetick();setInterval(livetick,2000);alarmtick();setInterval(alarmtick,1000);thermtick();setInterval(thermtick,2000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

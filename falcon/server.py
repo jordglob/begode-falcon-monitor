@@ -28,6 +28,7 @@ from . import rideanalysis
 from .elevation import Dem
 from .beeps import BeepWatch
 from . import tripmax
+from .thermal import Thermal, RModel, charge_temp_ok, battery_temp
 from . import __version__
 from . import control as ctl
 from .verify import Verifier
@@ -94,6 +95,8 @@ def _on_frame(f) -> None:
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
 gate = ctl.ControlGate()          # OFF at every start
+thermal = Thermal(RModel(store.get_json("thermal_points") or []))
+_last_charge_temp_note = 0.0
 beepwatch = BeepWatch(Path(os.environ.get("FALCON_BLACKBOX", Path.home() / ".local/share/begode-falcon/blackbox")),
                       on_event=lambda m: log_event(m), on_record=lambda e: store.add_beep_event(e))
 SETTINGS = {**settings_mod.defaults(), **(store.get_json("settings") or {})}
@@ -171,6 +174,43 @@ def _auto_backup() -> None:
         log_event(f"Backup: fel {e}")
 
 
+def _weakest_cell():
+    """(V0 of the weakest cell without load, its resistance, temperature when measured)."""
+    comp = guard.load_spread.comp
+    now = time.time()
+    fresh = {k: v for k, v in comp.items() if now - v[0] <= 30}
+    temp = battery_temp(state.snapshot())
+    if fresh:
+        k = min(fresh, key=lambda x: fresh[x][1])
+        return fresh[k][1], cellreg.resistance(k), temp
+    cells = [v for s in (state.snapshot().get("cells") or {}).values() for v in s.get("cells_mv", [])]
+    if cells and abs(state.battery_current() or 0) < 1:       # at rest: voltage ≈ V0
+        rs = sorted(r for r in (cellreg.resistance(f"{s}{i}") for s in "AB" for i in range(1, 25)) if r)
+        return min(cells), (rs[-1] if rs else None), temp
+    return None, None, temp
+
+
+def _thermal_tick(now: float) -> dict:
+    global _last_charge_temp_note
+    snap = state.snapshot()
+    v0, r_w, t_meas = _weakest_cell()
+    p_now = energy_power_now()
+    res = thermal.evaluate(snap, v0, r_w, t_meas, p_now, alarms.report().get("safety_margin_pct"), now)
+    charging = (state.battery_current() or 0) < -0.5
+    ok, msg = charge_temp_ok(res.get("temp_c"))
+    res["charge_temp_ok"], res["charge_note"] = ok, msg
+    if charging and not ok and now - _last_charge_temp_note > 600:
+        _last_charge_temp_note = now
+        log_event("🌡️ " + msg)
+        if charger.enabled and charger.plug.configured:
+            try:
+                charger.plug.set(False)
+                log_event("🔌 Laddningen stoppad på grund av batteritemperaturen")
+            except Exception as e:
+                log_event(f"🔌 Kunde inte stoppa laddningen: {e}")
+    return res
+
+
 async def guard_loop() -> None:
     """1 Hz: run the imbalance guard, log every change of finding, persist baseline."""
     active: dict = {}
@@ -213,10 +253,20 @@ async def guard_loop() -> None:
             log_event(f"✅ Upphört: {key[0]} {key[1]}")
         active = {k: f.level for k, f in found.items()}
         n += 1
+        if n % 5 == 0:
+            try:
+                tr = _thermal_tick(time.time())
+                if n % 30 == 0:
+                    thermal.learn(tr.get("temp_c"), {k: cellreg.resistance(k) for k in
+                                                     (f"{s}{i}" for s in "AB" for i in range(1, 25))})
+                store.add_thermal(time.time(), tr, energy_power_now(), _weakest_cell()[0])
+            except Exception as e:
+                log_event(f"Temperatur: fel {e}")
         if n % 60 == 0:
             store.set_json("guard_baseline", guard.export_baseline())
             health.save()
             _auto_backup()
+            store.set_json("thermal_points", list(thermal.model.points))
 
 
 @asynccontextmanager
@@ -807,6 +857,18 @@ def api_beeps_box(name: str):
     if not p.exists():
         return _err(Exception("finns inte"), 404)
     return FileResponse(p, media_type="application/json", filename=name)
+
+
+@app.get("/api/thermal")
+def api_thermal():
+    return {**thermal.last, "model": {"fitted": thermal.model.fitted, "points": len(thermal.model.points),
+                                      "curve": thermal.model.curve(),
+                                      "scatter": list(thermal.model.points)[-300:]}}
+
+
+@app.get("/api/thermal/history")
+def api_thermal_history(hours: float = 24):
+    return store.thermal_history(min(hours, 24 * 366))
 
 
 @app.get("/api/history")
