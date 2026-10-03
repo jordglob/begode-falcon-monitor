@@ -65,7 +65,11 @@ def test_gate_confirm_window_and_auto_off():
 
 
 def test_whitelist_and_ranges():
-    assert "tiltback" not in ctl.SETTINGS                   # not offered before mapping
+    assert not ctl.SETTINGS["tiltback"].get("hidden")       # mapped live 2026-10-03
+    assert ctl.SETTINGS["tiltback"]["read"] is not None     # verified by read-back
+    assert ctl.build("tiltback", 48).payload == b"WY48"
+    with pytest.raises(ValueError):
+        ctl.build("tiltback", 90)                            # outside the test range
     assert ctl.build("led_mode", 4).payload == b"WM4"
     assert ctl.build("pedal", "hard").payload == b"h"
     with pytest.raises(ValueError):
@@ -189,5 +193,6 @@ def test_api_backup_and_restore(api):
     c.post("/api/control/confirm", json={"token": c.post("/api/control/enable").json()["token"]})
     touch()
     r = c.post("/api/backup/restore", json={"name": name}).json()
-    assert r["results"] == [{"field": "p4.led_mode", "status": "verified", "value": 3}]
+    assert {"field": "p4.led_mode", "status": "verified", "value": 3} in r["results"]
+    assert {"field": "p4.tiltback_kmh", "status": "redan rätt", "value": 51} in r["results"]
     assert fl.sent == [b"WM3", b"WM3"]

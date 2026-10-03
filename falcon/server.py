@@ -340,6 +340,8 @@ def api_control(req: Request):
     snap = state.snapshot()
     settings = []
     for sid, s in ctl.SETTINGS.items():
+        if s.get("hidden"):
+            continue
         cur = s["read"](state)[1] if s.get("read") else None
         settings.append({"id": sid, "label": s["label"], "kind": s["kind"],
                          "min": s.get("min"), "max": s.get("max"), "step": s.get("step", 1),

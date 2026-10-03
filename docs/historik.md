@@ -63,7 +63,7 @@ inte att ändra över Bluetooth), tar **en anslutning åt gången**, har **ingen
   rapporteras inte över Bluetooth, bara orsakerna indirekt.
 
 ## Kvar att göra
-- **Kartlägga tiltback och fartgräns** live, med hjulet upplyft – innan tiltback kan styras.
+- ~~Kartlägga tiltback~~ – **klart 3 oktober**: paket 4 ord 5 = tiltback km/h, bekräftat live (51 → 48 → 51). Fartlarmens gränser återstår.
 - **Bekräfta strömskalorna** under belastning och laddning.
 - **Terrängmodell** för hemområdet (kräver gratis Geotorget-konto).
 - **Mobilversion** (Web Bluetooth): turer utan dator, mobilens GPS och barometer, mikrofon som

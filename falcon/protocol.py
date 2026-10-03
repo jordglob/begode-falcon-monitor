@@ -104,7 +104,6 @@ UNCERTAIN = {
     "p1.bms": ("BMS (1 = sträng A, 2 = sträng B)", "", "ok"),
     "p1.half": ("Paketets halva (1/2)", "", "ok"),
     "p1.pwm_limit_or_alarm": "PWM-gräns eller batterivarning (källorna säger olika)",
-    "p4.tiltback_or_pedal": "tiltback-fart km/h (WheelLog) eller pedalkänslighet (Begode-appen)",
     "p1.mos": "MOS-bitarna visar 'av' trots ström — betydelse oklar",
 }
 
@@ -143,7 +142,7 @@ FIELD_INFO = {
     "p4.roll_angle_mode": ("Lutningsvinkel-läge (bitar 7–8)", "", "scale"),
     "p4.in_miles": ("Miles", "", "ok"),
     "p4.power_off_in_s": ("Tid kvar till auto-avstängning (nedräkning, 7200 = full)", "s", "ok"),
-    "p4.tiltback_or_pedal": ("Tiltback-fart eller pedalkänslighet", "", "unknown"),
+    "p4.tiltback_kmh": ("Tiltback-fart (bekräftad live med WY48/WY51)", "km/h", "ok"),
     "p4.led_mode": ("LED-/stämningsljusläge", "", "ok"),
     "p4.alert_raw": ("Larmbyte, rått", "", "ok"),
     "p4.alerts": ("Hjulets larm", "", "ok"),
@@ -227,7 +226,7 @@ def decode_p4(f: Frame) -> dict:
         "roll_angle_mode": (settings >> 7) & 3,
         "in_miles": bool(settings & 1),
         "power_off_in_s": apo,          # countdown, not a setting (seen 7200 -> 0 -> off)
-        "tiltback_or_pedal": w5,
+        "tiltback_kmh": w5,
         "led_mode": p[11],                 # frame byte 13 (ambient light)
         "alert_raw": alert,
         "alerts": [name for bit, name in ALERT_BITS if alert & bit],

@@ -27,7 +27,7 @@ def test_backup_contains_everything(tmp_path):
                  "0.9.0", now=1_790_000_000)
     saved = json.loads((tmp_path / doc["name"]).read_text())
     assert saved["wheel_firmware"] == "GW1634001" and saved["odometer_m"] == 836866
-    assert saved["settings"]["p4.led_mode"] == 3 and saved["restorable"] == {"p4.led_mode": 3}
+    assert saved["settings"]["p4.led_mode"] == 3 and saved["restorable"] == {"p4.led_mode": 3, "p4.tiltback_kmh": 51}
     assert len(saved["raw_rows"]) == 13
     assert b.list()[0]["name"] == doc["name"]
 

@@ -9,6 +9,7 @@ Put the login in ~/.config/begode-falcon/lantmateriet.env (never in the reposito
 
     .venv/bin/python tools/lm_fetch.py --area stockholm,nacka,huddinge [--folder DIR] [--dry-run]
     .venv/bin/python tools/lm_fetch.py --bbox LAT_MIN LON_MIN LAT_MAX LON_MAX
+    .venv/bin/python tools/lm_fetch.py --around-gps 10      # ~10 km² around the current GPS position
 
 Only the area's bounding box is sent to Lantmäteriet's catalogue – never ride positions.
 Attribution: © Lantmäteriet, CC BY 4.0.
@@ -16,6 +17,7 @@ Attribution: © Lantmäteriet, CC BY 4.0.
 import argparse
 import base64
 import json
+import math
 import os
 import sys
 import urllib.parse
@@ -66,6 +68,9 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--area", help="comma separated: " + ", ".join(AREAS))
     ap.add_argument("--bbox", nargs=4, type=float)
+    ap.add_argument("--around-gps", type=float, metavar="KM2",
+                    help="area (km²) centred on the GPS position from the running server")
+    ap.add_argument("--server", default="http://localhost:8096")
     ap.add_argument("--folder", default=str(Path.home() / ".local/share/begode-falcon/dem"))
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv[1:])
@@ -78,6 +83,17 @@ def main(argv):
             boxes.append(AREAS[name.strip()])
     if a.bbox:
         boxes.append(tuple(a.bbox))
+    if a.around_gps:
+        g = json.load(urllib.request.urlopen(a.server + "/api/gps", timeout=10))
+        st = g.get("state") or {}
+        if not g.get("fix") or st.get("lat") is None:
+            print("ingen GPS-position från servern")
+            return 2
+        half_km = math.sqrt(a.around_gps) / 2
+        dlat = half_km / 111.195
+        dlon = half_km / (111.195 * math.cos(math.radians(st["lat"])))
+        boxes.append((st["lat"] - dlat, st["lon"] - dlon, st["lat"] + dlat, st["lon"] + dlon))
+        print(f"{a.around_gps:g} km² runt nuvarande GPS-position")
     if not boxes:
         ap.print_help()
         return 2

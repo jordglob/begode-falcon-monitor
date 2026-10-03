@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 # backup field -> control setting id; only settings the wheel reports back (verified)
-RESTORABLE = {"p4.led_mode": "led_mode"}
+RESTORABLE = {"p4.led_mode": "led_mode", "p4.tiltback_kmh": "tiltback"}
 
 # reported in packet 4 but not settings: they change by themselves
 NOT_SETTINGS = ("p4.odometer_raw", "p4.alert_raw", "p4.alerts", "p4.power_off_in_s")

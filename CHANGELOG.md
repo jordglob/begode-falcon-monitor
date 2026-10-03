@@ -2,6 +2,18 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.16.0 – 2026-10-03
+- **Tiltback mapped live**: with the wheel lifted, `WY48` changed packet 4 word 5 from 51 to 48
+  and nothing else; `WY51` restored it (verified). Word 5 is the **tiltback speed in km/h**
+  (WheelLog was right; the official app's "pedal sensitivity" name was wrong). Field renamed
+  `tiltback_kmh`; tiltback is now a ✅ verified setting (21–75 km/h, 3 km/h steps) and part of
+  the settings backup/restore.
+- Observed: the wheel sometimes ignores a command sent shortly after another, and the motor of
+  a lifted wheel can draw > 3 A (the app then refuses changes) – exactly why every write is read
+  back.
+- Copernicus tiles need `imagecodecs` (floating-point predictor) – added to requirements.
+- `tools/lm_fetch.py --around-gps KM2`: fetch Lantmäteriet tiles around the current position.
+
 ## 0.15.2 – 2026-10-03
 - **Settings moved to the header**: an always visible "⚙️ Inställningar" button opens the
   settings as a panel over any tab (deep link `#prefs`); the Live tab shows a reminder when

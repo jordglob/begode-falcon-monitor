@@ -41,7 +41,7 @@ Status: ✅ plausible/confirmed · ⚠️ scale from one source, not confirmed u
 | words 1–2 | odometer, m | ✅ |
 | word 3 | settings bits: pedal mode (13–14), speed alarms (10–11), roll angle (7–8), miles (0) | ⚠️ |
 | word 4 | **countdown to auto power-off**, s (7200 → 0 → wheel switches off) | ✅ seen live |
-| word 5 | tiltback speed km/h (WheelLog) or pedal sensitivity (official app) – 51 | ❓ mapping pending |
+| word 5 | **tiltback speed, km/h** – confirmed live (`WY48` → 48, `WY51` → 51) | ✅ |
 | byte 13 | LED / ambient mode | ✅ (verified with `WM`) |
 | byte 14 | alert bits: high power, speed 2, speed 1, low voltage, over-voltage, over-temperature, hall sensor error, transport mode | ✅ |
 | byte 15 | light mode (2 bits) | ⚠️ |
@@ -64,7 +64,7 @@ Status: ✅ plausible/confirmed · ⚠️ scale from one source, not confirmed u
 | `Q` `E` `T` | headlight on / off / flash | ⚠️ |
 | `WB1`–`WB9` | beeper volume | ⚠️ |
 | `WP50`–`WP90` | battery alarm (5 % steps) | ⚠️ |
-| `WY03`–`WY90` | tiltback speed (3 km/h steps) | ❌ blocked until mapped |
+| `WY03`–`WY90` | tiltback speed (3 km/h steps) | ✅ verified (21–75 km/h allowed) |
 | `cy`, `< = >`, `e x`, `+-`, `Wl WC WU WX WR`, `m g` | calibration, gear ratio, brake/power bridge, mode toggle, current limit etc., units | 🔒 never sent |
 
 ## Firmware catalog

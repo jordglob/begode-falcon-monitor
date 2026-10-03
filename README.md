@@ -9,7 +9,8 @@ degradation** tracking over time. The web UI itself is in Swedish.
 > default**. Wheel control exists but is **off at every start**, can only be switched on from
 > the computer running the server (never from a phone or another LAN device), needs a two-step
 > confirmation and switches itself off after 10 minutes. Dangerous commands (calibration, gear
-> ratio, brake cut-off, tiltback etc.) are blocked in code and can never be sent.
+> ratio, brake cut-off etc.) are blocked in code and can never be sent; tiltback is only
+> accepted within 21–75 km/h and always read back.
 
 ## Quick start
 

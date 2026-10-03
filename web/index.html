@@ -190,7 +190,7 @@ async function tick(){
       +kv('Mätarställning',p4.odometer_raw!=null?fmt(p4.odometer_raw/1000,1,'km'):'—')
       +kv('Tripp',fmt(p0.trip_m/1000,2,'km'))+kv('Räckvidd? (rå, osäkert)',fmt(p0.word3_raw,0))
       +kv('Hjulets larm',(p4.alerts&&p4.alerts.length)?`<span class="bad" style="font-size:15px">⛔ ${p4.alerts.join(', ')}</span>`:'<span class="ok" style="font-size:15px">inga</span>');
-    $('settings').innerHTML=kv('Tiltback km/h eller pedalkänslighet ❓',fmt(p4.tiltback_or_pedal,0))+kv('Stämningsljus (LED-läge)',fmt(p4.led_mode,0))
+    $('settings').innerHTML=kv('Tiltback-fart',fmt(p4.tiltback_kmh,0,'km/h'))+kv('Stämningsljus (LED-läge)',fmt(p4.led_mode,0))
       +kv('Stänger av om',p4.power_off_in_s!=null?(p4.power_off_in_s<600?`<span class="warn">⚠️ ${fmt(p4.power_off_in_s/60,0,'min')}</span>`:fmt(p4.power_off_in_s/60,0,'min')):'—')
       +kv('Ljusläge',fmt(p4.light_mode,0))+kv('Pedalläge (bitar) ❓',fmt(p4.pedal_mode_bits,0))
       +kv('Fartlarmläge',fmt(p4.speed_alarm_mode,0))+kv('Lutningsvinkel-läge',fmt(p4.roll_angle_mode,0))

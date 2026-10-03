@@ -16,7 +16,7 @@ import secrets
 import subprocess
 import time
 
-from .protocol import (Command, cmd_ambient_mode, cmd_beeper_volume, cmd_headlight,
+from .protocol import (Command, cmd_ambient_mode, cmd_tiltback_speed, cmd_beeper_volume, cmd_headlight,
                        cmd_pedal_mode, cmd_power_alarm, CMD_BEEP, CMD_REQUEST_NAME,
                        CMD_REQUEST_VERSION)
 
@@ -145,8 +145,11 @@ SETTINGS = {
     "req_name":  {"label": "Läs hjulets namn (N)", "kind": "action",
                   "build": lambda v: CMD_REQUEST_NAME, "read": None, "ascii_reply": True},
 }
-# Tiltback speed (WY..) is deliberately NOT offered until step 3 has mapped where the wheel
-# reports it — a wrong tiltback value changes how the wheel behaves at speed.
+# Tiltback speed (WY..): mapped live 2026-10-03 – packet 4 word 5 follows the command
+# (51 -> 48 -> 51, verified). 3 km/h steps like the official app; the range is limited.
+SETTINGS["tiltback"] = {"label": "Tiltback-fart", "kind": "int", "min": 21, "max": 75, "step": 3,
+                        "build": lambda v: cmd_tiltback_speed(int(v)), "read": _p4("tiltback_kmh"),
+                        "expected": lambda v: int(v)}
 
 
 def build(setting: str, value) -> Command:
