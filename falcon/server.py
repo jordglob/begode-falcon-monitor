@@ -27,6 +27,7 @@ from . import settings as settings_mod
 from . import rideanalysis
 from .elevation import Dem
 from .beeps import BeepWatch
+from . import tripmax
 from . import __version__
 from . import control as ctl
 from .verify import Verifier
@@ -92,7 +93,7 @@ link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
 gate = ctl.ControlGate()          # OFF at every start
 beepwatch = BeepWatch(Path(os.environ.get("FALCON_BLACKBOX", Path.home() / ".local/share/begode-falcon/blackbox")),
-                      on_event=lambda m: log_event(m))
+                      on_event=lambda m: log_event(m), on_record=lambda e: store.add_beep_event(e))
 SETTINGS = {**settings_mod.defaults(), **(store.get_json("settings") or {})}
 dem = Dem(SETTINGS.get("dem_dir"))
 GPS_ON = os.environ.get("FALCON_GPS", "auto") != "0"
@@ -678,6 +679,16 @@ def api_ride_analysis(ride_id: int, fresh: bool = False):
     if res is None:
         return _err(Exception("turen finns inte"), 404)
     return res
+
+
+@app.get("/api/rides/{ride_id:int}/max")
+def api_ride_max(ride_id: int):
+    r = _ride_points(ride_id)
+    if r is None:
+        return _err(Exception("turen finns inte"), 404)
+    t0, t1 = r[0]["ts"], r[-1]["ts"]
+    return tripmax.compute(r, store.samples_between(t0, t1), _analysis(ride_id),
+                           store.beep_events_between(t0, t1))
 
 
 @app.get("/api/analysis/grade-energy")

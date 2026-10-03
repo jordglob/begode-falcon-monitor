@@ -131,6 +131,13 @@ class EnergyCounter:
         self._iv_i_sum = 0.0
         self._iv_dt = 0.0
         self._iv_start: float | None = None
+        self._reset_extremes()
+
+    def _reset_extremes(self) -> None:
+        self._iv_i_max = None          # highest discharge current, A
+        self._iv_p_max = None          # highest consumption power, W
+        self._iv_regen_max = None      # highest regeneration power, W (positive number)
+        self._iv_v_min = None          # lowest bus voltage (sag under load), V
 
     def add(self, ts: float, volt: float | None, amps: float | None, pwm: float | None) -> None:
         if volt is None or amps is None:
@@ -150,6 +157,13 @@ class EnergyCounter:
         self.last_ts = ts
         if pwm is not None:
             self._iv_pwm_max = pwm if self._iv_pwm_max is None else max(self._iv_pwm_max, pwm)
+        p = volt * amps
+        self._iv_i_max = amps if self._iv_i_max is None else max(self._iv_i_max, amps)
+        if p >= 0:
+            self._iv_p_max = p if self._iv_p_max is None else max(self._iv_p_max, p)
+        else:
+            self._iv_regen_max = -p if self._iv_regen_max is None else max(self._iv_regen_max, -p)
+        self._iv_v_min = volt if self._iv_v_min is None else min(self._iv_v_min, volt)
 
     def take_interval(self, now: float) -> dict:
         """Counters + interval stats since the previous call (stored with each GPS point)."""
@@ -157,6 +171,11 @@ class EnergyCounter:
         out = {"wh_out_cum": round(self.wh_out, 4), "wh_regen_cum": round(self.wh_regen, 4),
                "pwm_max": self._iv_pwm_max,
                "current_avg": round(self._iv_i_sum / self._iv_dt, 2) if self._iv_dt else None,
-               "data_cov": round(min(1.0, self._iv_dt / span), 2) if span > 0 else 0.0}
+               "data_cov": round(min(1.0, self._iv_dt / span), 2) if span > 0 else 0.0,
+               "current_max": round(self._iv_i_max, 2) if self._iv_i_max is not None else None,
+               "power_max_w": round(self._iv_p_max) if self._iv_p_max is not None else None,
+               "regen_max_w": round(self._iv_regen_max) if self._iv_regen_max is not None else None,
+               "volt_min": round(self._iv_v_min, 2) if self._iv_v_min is not None else None}
         self._iv_pwm_max, self._iv_i_sum, self._iv_dt, self._iv_start = None, 0.0, 0.0, now
+        self._reset_extremes()
         return out

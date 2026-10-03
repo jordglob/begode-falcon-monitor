@@ -2,6 +2,16 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.15.0 – 2026-10-03
+- **Max values per ride** ("Maxvärden för turen"): max speed, lowest safety margin (highest
+  PWM), highest current, highest power, highest regeneration, lowest voltage under load,
+  lowest cell, largest cell spread, highest motor/board/battery temperature, steepest climb and
+  descent, highest point – each with time and place (click to jump on the map and profile) and
+  coloured by severity; alarms logged during the ride listed with time.
+- Current, power, regeneration and voltage extremes are measured at packet rate (0.3 s) and
+  stored per GPS interval (new columns); alarm events are now persisted in the database.
+- Ride list: highest power and lowest margin columns.
+
 ## 0.14.0 – 2026-10-03
 - **Pip-larm tab – "Varför piper det?"**: every change of the alert bits, BMS protection /
   voltage / temperature state, MOS, lowest-cell band, pack without current and PWM zone is

@@ -77,6 +77,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
     <div id="ridemodes" style="margin-top:10px;display:none"></div>
     <div id="ridemap" style="height:420px;border-radius:10px;margin-top:6px;display:none"></div>
     <div id="ridelegend" class="note" style="margin-top:6px"></div><div id="ridestats" class="grid" style="margin-top:8px"></div></div>
+  <div class="card" id="maxcard" style="display:none"><h2>Maxvärden för turen</h2><div class="grid" id="maxgrid"></div>
+    <div class="note" id="maxnote">Klicka på ett värde för att se var det hände på kartan och i profilen.</div>
+    <div id="maxalarms" style="margin-top:8px"></div></div>
   <div class="card" id="elevcard" style="display:none"><h2>Höjd och energi</h2><div class="note" id="elevsrc"></div>
     <div class="grid" id="elevtot" style="margin:8px 0"></div>
     <div id="profelev"></div><div id="profpow"></div>
@@ -355,9 +358,10 @@ function loadLeaflet(){return new Promise((ok,bad)=>{if(window.L)return ok();
 const dur=s=>s>=3600?`${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min`:`${Math.round(s/60)} min`;
 async function ridestick(force){try{if(!$('pos').classList.contains('act'))return;if(!force&&Date.now()-ridesLoaded<30000)return;ridesLoaded=Date.now();
   const r=await fetch('/api/rides').then(r=>r.json());
-  $('ridelist').innerHTML=r.rides.length?'<tr><td>Start</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Hjulets fart</td><td>Fartrimlighet</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
+  $('ridelist').innerHTML=r.rides.length?'<tr><td>Start</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Högsta effekt</td><td>Lägsta marginal</td><td>Hjulets fart</td><td>Fartrimlighet</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
     <td>${new Date(x.start*1000).toLocaleString('sv-SE',{dateStyle:'short',timeStyle:'short'})}</td><td>${fmt(x.distance_km,2,'km')}</td><td>${dur(x.moving_s)}</td>
-    <td>${fmt(x.max_kmh,0,'km/h')}</td><td>${fmt(x.avg_moving_kmh,0,'km/h')}</td><td class="note">${x.wheel_speed_share_pct} % av punkterna</td>
+    <td>${fmt(x.max_kmh,0,'km/h')}</td><td>${fmt(x.avg_moving_kmh,0,'km/h')}</td>
+    <td>${fmt(x.power_max_w,0,'W')}</td><td>${x.min_margin_pct!=null?`<span class="${x.min_margin_pct<=20?'bad':x.min_margin_pct<=30?'warn':'ok'}">${x.min_margin_pct.toFixed(0)} %</span>`:'—'}</td><td class="note">${x.wheel_speed_share_pct} % av punkterna</td>
     <td>${x.spin_s||x.carried_s?`<span class="warn">${x.spin_s?'⚠️ snurrar '+x.spin_s+' s ':''}${x.carried_s?'⚠️ bärs '+x.carried_s+' s':''}</span>`:(x.checked_share_pct?`<span class="ok">✅</span> <span class="note">${x.checked_share_pct} % kontrollerat</span>`:'<span class="note">kan ej bedömas</span>')}</td>
     <td><button class="btn" onclick="showRide(${x.id})">Visa på karta</button> <a class="note" href="/api/rides/${x.id}.gpx" download>GPX</a> · <a class="note" href="/api/rides/${x.id}.csv" download>CSV</a></td></tr>`).join('')
     :'<tr><td class="note">Inga turer ännu. En tur sparas när GPS:en rör sig minst 30 s över 3 km/h och minst 100 m.</td></tr>';
@@ -401,6 +405,21 @@ function markerAtTs(ts){if(!rideData||!rideMarker)return;const T=rideData.track;
 function profCursorAtTs(ts){if(!rideAna||!profPlots.length)return;const pr=rideAna.profile;let best=0,bd=1e18;
   for(let i=0;i<pr.length;i++){const d=Math.abs((pr[i][5]||0)-ts);if(d<bd){bd=d;best=i}}
   profPlots.forEach(u=>{const x=u.valToPos(pr[best][0],'x');u.setCursor({left:x,top:20})})}
+let maxItems=[];
+async function renderMax(id){try{const m=await fetch(`/api/rides/${id}/max`).then(r=>r.json());maxItems=m.items||[];
+  $('maxcard').style.display='block';
+  const cls={ok:'ok',warn:'warn',bad:'bad'};
+  $('maxgrid').innerHTML=maxItems.map((x,i)=>`<div class="kv" style="cursor:pointer" onclick="gotoMax(${i})" title="${x.ts?new Date(x.ts*1000).toLocaleTimeString('sv-SE'):''}">
+    <div class="k">${x.label}</div><div class="v"><span class="${cls[x.level]||''}">${x.value} ${x.unit}</span></div>
+    <div class="note">${x.ts?'kl. '+new Date(x.ts*1000).toLocaleTimeString('sv-SE'):''}${x.note?' · '+x.note:''}</div></div>`).join('')||'<div class="note">Inga värden.</div>';
+  $('maxnote').innerHTML='Klicka på ett värde för att se var det hände på kartan och i profilen.'+(m.notes&&m.notes.length?'<br>'+m.notes.join(' '):'');
+  const A=m.alarms;
+  $('maxalarms').innerHTML=A.count?`<b class="bad">⛔ ${A.count} larm under turen:</b> ${A.kinds.join(', ')}<table>${A.events.map(e=>`<tr style="cursor:pointer" onclick="gotoTs(${e.ts})"><td>${new Date(e.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${e.key}</td><td>${e.old} → <b>${e.new}</b></td></tr>`).join('')}</table>`
+    :'<span class="ok">✅ Inga larm loggade under turen.</span>';
+}catch(e){}}
+function gotoTs(ts){markerAtTs(ts);profCursorAtTs(ts);const T=rideData&&rideData.track;if(!T)return;
+  let best=T[0],bd=1e18;for(const p of T){const d=Math.abs(p[3]-ts);if(d<bd){bd=d;best=p}}LMAP.setView([best[0],best[1]],Math.max(LMAP.getZoom(),16))}
+function gotoMax(i){const x=maxItems[i];if(x&&x.ts)gotoTs(x.ts)}
 async function renderAnalysis(id){$('elevcard').style.display='block';$('elevsrc').textContent='⏳ räknar …';
   const a=await fetch(`/api/rides/${id}/analysis`).then(r=>r.json());rideAna=a;drawRide();
   if(!a.ok){$('elevsrc').textContent='Ingen höjdanalys: '+(a.reason||a.error);return}
@@ -449,7 +468,7 @@ async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(
   if(!LMAP){LMAP=L.map(el);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(LMAP)}
   drawRide();const T=r.track;
   LMAP.invalidateSize();LMAP.fitBounds(L.latLngBounds(T.map(p=>[p[0],p[1]])),{padding:[20,20]});
-  renderAnalysis(id);gradeEnergyTick();
+  renderAnalysis(id).then(()=>renderMax(id));gradeEnergyTick();
   $('ridestats').innerHTML=kv('Sträcka',fmt(r.distance_km,2,'km'))+kv('Tid i rörelse',dur(r.moving_s))+kv('Total tid',dur(r.duration_s))
     +kv('Maxfart',fmt(r.max_kmh,1,'km/h'))+kv('Snittfart i rörelse',fmt(r.avg_moving_kmh,1,'km/h'))+kv('Punkter',r.points)
     +kv('Hjulet snurrar fortare',r.spin_s?`<span class="warn">${r.spin_s} s</span>`:'0 s')+kv('Bärs / står still',r.carried_s?`<span class="warn">${r.carried_s} s</span>`:'0 s')

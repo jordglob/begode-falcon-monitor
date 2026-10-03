@@ -85,11 +85,15 @@ def write_ride(db, t0, laps, vmax, spin=None):
         gps_v = v * 0.98
         if spin and spin[0] <= i < spin[1]:              # wheel lifted / slipping
             wheel, gps_v = 45.0, 4.0
+        burst = 1.0 + 0.6 * abs(math.sin(i / 3))           # short peaks within the 2 s interval
+        volt = 96.0 - 0.06 * max(p, 0) / 92 * burst
         db.execute("INSERT OR REPLACE INTO gps_samples (ts, lat, lon, alt_m, speed_kmh, course_deg, sats, hdop, "
-                   "fix_type, wheel_speed_kmh, wh_out_cum, wh_regen_cum, pwm_max, current_avg, data_cov) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   "fix_type, wheel_speed_kmh, wh_out_cum, wh_regen_cum, pwm_max, current_avg, data_cov, "
+                   "current_max, power_max_w, regen_max_w, volt_min) "
+                   "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (t, lat2, lon2, hill(lat2) + random.gauss(0, 3), gps_v, 0, 9, 0.9, "3D", wheel,
-                    round(wh_out, 4), round(wh_reg, 4), min(95, 15 + 1.2 * v + max(0, grade) * 300), p / 92, 1.0))
+                    round(wh_out, 4), round(wh_reg, 4), min(95, 15 + 1.2 * v + max(0, grade) * 300), p / 92, 1.0,
+                    round(max(p, 0) / 92 * burst, 1), round(max(p, 0) * burst), round(max(-p, 0) * burst), round(volt, 2)))
         lat, lon, d, t, i = lat2, lon2, d + step, t + 2.0, i + 1
     return t
 

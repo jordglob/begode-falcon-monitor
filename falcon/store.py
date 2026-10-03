@@ -35,9 +35,12 @@ class Store:
         """Add columns introduced after the first release (SQLite ADD COLUMN)."""
         have = {r[1] for r in self.db.execute("PRAGMA table_info(gps_samples)")}
         for col, typ in (("wh_out_cum", "REAL"), ("wh_regen_cum", "REAL"), ("pwm_max", "REAL"),
-                         ("current_avg", "REAL"), ("data_cov", "REAL")):
+                         ("current_avg", "REAL"), ("data_cov", "REAL"), ("current_max", "REAL"),
+                         ("power_max_w", "REAL"), ("regen_max_w", "REAL"), ("volt_min", "REAL")):
             if col not in have:
                 self.db.execute(f"ALTER TABLE gps_samples ADD COLUMN {col} {typ}")
+        self.db.execute("CREATE TABLE IF NOT EXISTS beep_events (ts REAL, key TEXT, old TEXT, new TEXT, "
+                        "level TEXT, text TEXT)")
         self.db.execute("CREATE TABLE IF NOT EXISTS ride_analysis (ride_id INTEGER, version INTEGER, "
                         "source TEXT, created REAL, result TEXT, PRIMARY KEY (ride_id, version, source))")
         self.db.commit()
@@ -115,12 +118,14 @@ class Store:
         e = energy or {}
         self.db.execute(
             "INSERT OR REPLACE INTO gps_samples (ts, lat, lon, alt_m, speed_kmh, course_deg, sats, hdop, "
-            "fix_type, wheel_speed_kmh, wh_out_cum, wh_regen_cum, pwm_max, current_avg, data_cov) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "fix_type, wheel_speed_kmh, wh_out_cum, wh_regen_cum, pwm_max, current_avg, data_cov, "
+            "current_max, power_max_w, regen_max_w, volt_min) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (ts or time.time(), s.get("lat"), s.get("lon"), s.get("alt_m"), s.get("speed_kmh"),
              s.get("course_deg"), s.get("sats_used"), s.get("hdop"), s.get("fix_type"), wheel_speed,
              e.get("wh_out_cum"), e.get("wh_regen_cum"), e.get("pwm_max"), e.get("current_avg"),
-             e.get("data_cov")))
+             e.get("data_cov"), e.get("current_max"), e.get("power_max_w"), e.get("regen_max_w"),
+             e.get("volt_min")))
         self.db.commit()
 
     def gps_count(self) -> int:
@@ -136,3 +141,18 @@ class Store:
             f"SELECT avg(ts), {agg} FROM samples WHERE ts > ? GROUP BY CAST(ts / ? AS INTEGER) ORDER BY 1",
             (time.time() - hours * 3600, bucket))
         return [dict(zip(["ts"] + cols, r)) for r in cur.fetchall()]
+
+    def add_beep_event(self, e: dict) -> None:
+        self.db.execute("INSERT INTO beep_events VALUES (?,?,?,?,?,?)",
+                        (e["ts"], e["key"], str(e["old"]), str(e["new"]), e["level"], e["text"]))
+        self.db.commit()
+
+    def beep_events_between(self, t0: float, t1: float) -> list[dict]:
+        cur = self.db.execute("SELECT ts, key, old, new, level, text FROM beep_events WHERE ts BETWEEN ? AND ? "
+                              "ORDER BY ts", (t0, t1))
+        return [dict(zip(("ts", "key", "old", "new", "level", "text"), r)) for r in cur.fetchall()]
+
+    def samples_between(self, t0: float, t1: float) -> list[dict]:
+        cur = self.db.execute("SELECT * FROM samples WHERE ts BETWEEN ? AND ? ORDER BY ts", (t0, t1))
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]

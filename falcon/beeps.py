@@ -56,10 +56,11 @@ PRE_S, POST_S = 30.0, 15.0
 
 
 class BeepWatch:
-    def __init__(self, folder: Path, on_event=None):
+    def __init__(self, folder: Path, on_event=None, on_record=None):
         self.folder = folder
         self.folder.mkdir(parents=True, exist_ok=True)
         self.on_event = on_event or (lambda m: None)
+        self.on_record = on_record or (lambda e: None)
         self.state: dict = {}
         self.events: deque = deque(maxlen=500)
         self.frames: deque = deque()                 # (ts, type, sub, hex) last 60 s
@@ -133,6 +134,10 @@ class BeepWatch:
     def _event(self, ts, key, old, new, level, text) -> dict:
         e = {"ts": ts, "key": key, "old": old, "new": new, "level": level, "text": text}
         self.events.appendleft(e)
+        try:
+            self.on_record(e)
+        except Exception:
+            pass
         if level == "alarm" and new not in (None, False, "normal"):
             self.on_event(f"🔔 {key}: {old} → {new} ({text})")
             self.capture(ts, f"{key}: {old} → {new}")

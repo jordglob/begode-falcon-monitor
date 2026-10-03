@@ -40,7 +40,7 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | Live | **safety margin** (100 % − PWM, 3 s forecast), alarms with beep, speed, voltage, trip, odometer, wheel alerts, settings |
 | Energilager | imbalance guard, battery, cells (age + resistance per cell), BMS 1/2, bus (live via SSE, every 0.3 s), motor/electronics |
 | Batterihälsa | capacity and health, energy counters, wheel gauge vs ours, sessions, per-cell resistance, self-discharge, exposure |
-| Position & turer | GPS status; rides on a map coloured by **speed / elevation / grade / power**, elevation + power profiles, climbs, energy vs elevation (see [docs/elevation.md](docs/elevation.md)), wheel-vs-GPS speed plausibility, GPX/CSV export |
+| Position & turer | GPS status; rides on a map coloured by **speed / elevation / grade / power**, elevation + power profiles, climbs, **max values per ride** (with time and place), energy vs elevation (see [docs/elevation.md](docs/elevation.md)), wheel-vs-GPS speed plausibility, GPX/CSV export |
 | Alla parametrar | **every decoded field of every packet** with unit, status (✅ ⚠️ ❓), raw bytes, update period |
 | Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff; **settings backup** (manual, daily, on change) with download and restore |
 | Pip-larm | **why is the wheel beeping?** live causes, event log, black box, "I hear beeping now" button, instructions and investigation – see [docs/beeps.md](docs/beeps.md) |
@@ -72,6 +72,7 @@ an open connection needs raw HCI access (root) and is therefore not shown.
 | `falcon/export.py` | GPX / CSV export |
 | `falcon/elevation.py` | terrain tiles (.hgt, GeoTIFF incl. SWEREF 99 TM), GPS altitude filter, climb hysteresis |
 | `falcon/rideanalysis.py` | elevation/energy analysis per ride, regression, physics comparison |
+| `falcon/tripmax.py` | max/min values per ride with time and place |
 | `falcon/beeps.py` | beep watch: state changes at packet rate, black box, beep patterns |
 | `falcon/settings.py` | user settings (weights etc.) |
 | `tools/lm_fetch.py`, `tools/dem_fetch.py` | download Lantmäteriet / Copernicus terrain tiles |

@@ -98,6 +98,9 @@ def summary(r: list[dict]) -> dict:
         "points": len(r),
         "wheel_speed_share_pct": round(100 * sum(1 for p in r if p.get("wheel_speed_kmh") is not None) / len(r)),
         **_plaus_summary(r),
+        "power_max_w": max((p["power_max_w"] for p in r if p.get("power_max_w") is not None), default=None),
+        "min_margin_pct": (100 - max(p["pwm_max"] for p in r if p.get("pwm_max") is not None))
+        if any(p.get("pwm_max") is not None for p in r) else None,
     }
 
 
@@ -119,7 +122,8 @@ def track(r: list[dict]) -> list[list]:
 def load_points(db, since: float = 0) -> list[dict]:
     have = {r[1] for r in db.execute("PRAGMA table_info(gps_samples)")}
     cols = [c for c in ("ts", "lat", "lon", "speed_kmh", "wheel_speed_kmh", "sats", "hdop", "alt_m",
-                        "wh_out_cum", "wh_regen_cum", "pwm_max", "current_avg", "data_cov") if c in have]
+                        "wh_out_cum", "wh_regen_cum", "pwm_max", "current_avg", "data_cov",
+                        "current_max", "power_max_w", "regen_max_w", "volt_min") if c in have]
     rows = db.execute(f"SELECT {', '.join(cols)} FROM gps_samples "
                       "WHERE ts >= ? ORDER BY ts", (since,))
     return [dict(zip(cols, r)) for r in rows]
