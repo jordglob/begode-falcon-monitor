@@ -130,3 +130,37 @@ def test_wheel_alerts(real_snapshot):
     s["p4"]["alerts"] = ["fel på hallsensor"]
     f = Guard().update(s, now=0)
     assert "wheel_alert" in codes(f, "alarm")
+
+
+def test_load_spread_learns_normal_and_flags_weak_cell(real_snapshot):
+    from falcon.guard import LoadSpread
+    ls = LoadSpread()
+    t = 0.0
+    for k in range(80):                                   # healthy: ~1 mV per A per string
+        i = 20 + k % 30
+        cells = [4000 - int(i / 2 * 2) + (k + j) % 3 for j in range(8)]
+        ls.add(t, "A", 0, cells, i)
+        t += 0.3
+    assert ls.baseline is not None and ls.findings(t) == []
+    weak = [3950] * 8
+    weak[5] = 3870                                        # one cell sags 80 mV extra at 40 A
+    ls.add(t, "A", 1, weak, 40.0)
+    f = ls.findings(t)
+    assert f and f[0][1] == "load_spread" and "bank 1, cell 6" in f[0][2]
+
+
+def test_load_cell_collapse_is_alarm():
+    from falcon.guard import LoadSpread
+    ls = LoadSpread(1.0)
+    cells = [3500] * 8
+    cells[2] = 3150
+    ls.add(10, "B", 2, cells, 60.0)
+    kinds = {f[1]: f[0] for f in ls.findings(10)}
+    assert kinds["load_cell_low"] == "alarm" and kinds["load_spread"] == "alarm"
+
+
+def test_no_load_no_check():
+    from falcon.guard import LoadSpread
+    ls = LoadSpread()
+    ls.add(0, "A", 0, [4000] * 7 + [3800], 1.0)          # standing still
+    assert ls.findings(0) == []

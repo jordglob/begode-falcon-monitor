@@ -43,6 +43,67 @@ BALANCE_WARN_S = 2 * 3600
 
 LEVELS = {"ok": 0, "info": 1, "warn": 2, "alarm": 3}
 
+# cell spread UNDER LOAD – measured inside one bank (8 cells sampled at the same instant;
+# different banks are up to 1.8 s apart and would mix different load moments)
+LOAD_SPREAD_MIN_A = 5.0        # pack current needed
+LOAD_SPREAD_WARN_MV = 80       # absolute limits per bank
+LOAD_SPREAD_ALARM_MV = 150
+LOAD_CELL_ALARM_MV = 3200      # a cell this low under load can collapse -> cut-out
+LOAD_LEARN = 60                # samples to learn the normal mV-per-A spread
+LOAD_EXCESS_WARN_MV = 40       # above the learned normal for the same current
+
+
+class LoadSpread:
+    """Within-bank cell spread under load; learns this pack's normal spread per ampere and
+    names the cell that sags most."""
+
+    def __init__(self, baseline_mv_per_a: float | None = None):
+        self.recent: list[dict] = []
+        self.learn: list[float] = []
+        self.baseline = baseline_mv_per_a
+        self.worst_cells: dict[str, int] = {}
+
+    def add(self, ts: float, string: str, bank: int, cells_mv: list[int], pack_current: float | None) -> None:
+        if pack_current is None or abs(pack_current) < LOAD_SPREAD_MIN_A or len(cells_mv) < 2:
+            return
+        i_string = abs(pack_current) / 2
+        lo = min(range(len(cells_mv)), key=lambda j: cells_mv[j])
+        spread = max(cells_mv) - cells_mv[lo]
+        cell = f"sträng {string}, bank {bank}, cell {lo % 8 + 1} (nr {bank * 8 + lo + 1})"
+        rec = {"ts": ts, "spread_mv": spread, "i_string": i_string, "low_mv": cells_mv[lo], "cell": cell}
+        self.recent.append(rec)
+        self.recent = [r for r in self.recent if ts - r["ts"] <= 10]
+        if self.baseline is None:
+            self.learn.append(spread / i_string)
+            if len(self.learn) >= LOAD_LEARN:
+                self.learn.sort()
+                self.baseline = self.learn[len(self.learn) // 2]
+        if spread > LOAD_SPREAD_WARN_MV / 2:
+            self.worst_cells[cell] = self.worst_cells.get(cell, 0) + 1
+
+    def findings(self, now: float) -> list:
+        rec = [r for r in self.recent if now - r["ts"] <= 10]
+        if not rec:
+            return []
+        w = max(rec, key=lambda r: r["spread_mv"])
+        low = min(rec, key=lambda r: r["low_mv"])
+        out = []
+        if low["low_mv"] <= LOAD_CELL_ALARM_MV:
+            out.append(("alarm", "load_cell_low", low["cell"],
+                        f"Under last: {low['cell']} föll till {low['low_mv'] / 1000:.2f} V – risk att paketet "
+                        f"stänger av. Sakta in.", low["low_mv"]))
+        lvl = "alarm" if w["spread_mv"] >= LOAD_SPREAD_ALARM_MV else "warn" if w["spread_mv"] >= LOAD_SPREAD_WARN_MV else None
+        if lvl is None and self.baseline is not None:
+            expected = self.baseline * w["i_string"]
+            if w["spread_mv"] > expected + LOAD_EXCESS_WARN_MV:
+                lvl = "warn"
+        if lvl:
+            norm = f", normalt ≈ {self.baseline * w['i_string']:.0f} mV vid samma ström" if self.baseline else ""
+            out.append((lvl, "load_spread", w["cell"],
+                        f"Cellspridning under last {w['spread_mv']} mV vid {w['i_string'] * 2:.0f} A{norm} – "
+                        f"lägst: {w['cell']}.", w["spread_mv"]))
+        return out
+
 
 @dataclass
 class Finding:
@@ -80,12 +141,14 @@ class Guard:
         self.sum_baseline: float | None = None
         self.load_samples = 0
         self.findings: list[Finding] = []
+        self.load_spread = LoadSpread((baseline or {}).get("load_spread_mv_per_a"))
         if baseline:
             self.load_baseline(baseline)
 
     # ---------- baseline persistence ----------
     def export_baseline(self) -> dict:
-        return {"groups": {str(k): g.baseline for k, g in self.groups.items() if g.baseline},
+        return {"load_spread_mv_per_a": self.load_spread.baseline,
+                "groups": {str(k): g.baseline for k, g in self.groups.items() if g.baseline},
                 "sum": self.sum_baseline, "load_samples": self.load_samples}
 
     def load_baseline(self, b: dict) -> None:
@@ -106,6 +169,7 @@ class Guard:
         pack_i = snap.get("battery_current_a")
         p7_i = (snap.get("p7") or {}).get("battery_current_a")
         out += self._alert_checks((snap.get("p4") or {}).get("alerts") or [])
+        out += [Finding(*f) for f in self.load_spread.findings(now)]
         if bms and pack_i is not None:
             if abs(pack_i) >= LOAD_A and len(bms) >= 2:
                 self.load_samples += 1

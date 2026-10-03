@@ -2,6 +2,14 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.18.0 – 2026-10-03
+- **Cell spread under load** (imbalance guard): measured **inside each bank** of 8 cells (they
+  are sampled at the same instant – banks are up to 1.8 s apart and would mix different load
+  moments) whenever the pack current is ≥ 5 A. Warn at 80 mV, alarm at 150 mV, or 40 mV above
+  this pack's learned normal spread per ampere at the same current; **alarm when a cell falls
+  to 3.2 V under load** (risk of the pack cutting out). The cell that sags most is named
+  (string, bank, cell number). Every guard alarm now also writes a black box.
+
 ## 0.17.0 – 2026-10-03
 - **Live view of the ride going on** (Position & turer): appears automatically while a ride is
   recorded – map following the current position with the track coloured by speed, speed,

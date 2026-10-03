@@ -87,6 +87,7 @@ def _on_frame(f) -> None:
     elif f.type in (2, 3):
         cellreg.on_bank(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()),
                         bus.current(state.p7))
+        guard.load_spread.add(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()), state.battery_current())
 
 
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
@@ -205,6 +206,8 @@ async def guard_loop() -> None:
             if key not in active or active[key] != f.level:
                 log_event(f"{'⛔' if f.level == 'alarm' else '⚠️'} {f.text}")
                 store.add_guard_event(f.level, f.code, f.where, f.text)
+                if f.level == "alarm":
+                    beepwatch.capture(time.time(), f"obalansvakt: {f.text}")
         for key in set(active) - set(found):
             log_event(f"✅ Upphört: {key[0]} {key[1]}")
         active = {k: f.level for k, f in found.items()}
