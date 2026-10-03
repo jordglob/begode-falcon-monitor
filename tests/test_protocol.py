@@ -224,3 +224,10 @@ def test_web_page_has_unique_ids_and_tab_sections():
     assert dup == [], dup
     for tab in re.findall(r'<button data-t="([a-z]+)"', html):
         assert f'<section id="{tab}"' in html, tab        # every tab button has its own section
+
+
+def test_settings_reachable_from_header():
+    from pathlib import Path
+    html = (Path(__file__).resolve().parents[1] / "web" / "index.html").read_text()
+    head = html.split("<nav>")[0]
+    assert 'onclick="togglePrefs()"' in head and '<section id="prefs" class="overlay">' in html

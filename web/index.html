@@ -26,6 +26,9 @@ main{padding:0 16px 24px;max-width:900px;margin:auto}section{display:none}sectio
 .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;border-bottom:1px solid #22262f}
 .ro{font-size:12px;color:var(--ok)}
+section.overlay{display:none;position:fixed;inset:56px 0 0 0;z-index:500;overflow:auto;background:var(--bg);padding:12px 16px 30px}
+section.overlay.open{display:block}
+#prefsclose{position:sticky;top:0;float:right;z-index:2}
 .btn{padding:8px 14px;border:0;border-radius:8px;background:#2a2f3a;color:var(--fg);font-size:14px;margin:2px;cursor:pointer}
 .btn:disabled{opacity:.4;cursor:not-allowed}.btn.danger{background:#7a1f1a}.btn.go{background:#1d5e33}
 .ctlon{background:#3a1512 !important;outline:2px solid var(--bad)}
@@ -34,10 +37,12 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <body>
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
 <span id="sig" style="font-size:13px;color:var(--mut)"></span>
-<span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="beeps">Pip-larm</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="prefs">Inställningar</button><button data-t="log">Logg</button></nav>
+<button class="btn" id="prefsbtn" style="margin-left:auto;font-size:15px" onclick="togglePrefs()">⚙️ Inställningar</button>
+<span class="ro">🔒 endast läsning · <span id="ver"></span></span></header>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="beeps">Pip-larm</button><button data-t="graphs">Grafer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
+  <div class="card" id="prefshint" style="display:none;outline:2px solid var(--warn)"></div>
   <div class="card" id="alarmbar" style="display:none"></div>
   <div class="card"><h2>Säkerhetsmarginal</h2><div class="grid" id="margin"></div>
     <div class="note">Marginal = 100 % − PWM: hur mycket motorkraft som finns kvar. Vid 100 % PWM kan hjulet inte längre hålla upp dig. Prognosen räknar 3 s framåt från de senaste 3 sekunderna.</div></div>
@@ -147,7 +152,8 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
     <div class="note">✅ = hjulet rapporterar värdet tillbaka och resultatet verifieras · ⚠️ = skickas två gånger men kan inte läsas tillbaka än – resultatet visar i stället vilka fält som ändrades. Tiltback finns inte med förrän det är kartlagt var hjulet rapporterar det.</div></div>
   <div class="card"><h2>Kommandologg</h2><table id="ctllog"></table></div>
 </section>
-<section id="prefs">
+<section id="prefs" class="overlay">
+  <button class="btn" id="prefsclose" onclick="togglePrefs(false)">✕ Stäng</button>
   <div class="card"><h2>Inställningar</h2><table id="setform"></table><div class="note" id="setnote"></div></div>
   <div class="card"><h2>Terrängmodell (höjd)</h2><div id="demstat"></div>
     <div class="note"><b>Bäst i Sverige: Lantmäteriets markhöjdmodell</b> (1 m, marken utan träd och hus, gratis, CC BY 4.0).
@@ -170,7 +176,7 @@ const fmt=(v,d=1,u='')=>v==null||Number.isNaN(v)?'—':(typeof v==='number'?v.to
 const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('act'));
-  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);if(b.dataset.t==='prefs')settick(true);
+  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);
   try{localStorage.setItem('tab',b.dataset.t)}catch(e){}});
 try{const t=localStorage.getItem('tab');if(t)document.querySelector(`nav button[data-t=${t}]`)?.click()}catch(e){}
 
@@ -543,6 +549,9 @@ async function graphtick(force){if(!$('graphs').classList.contains('act'))return
           value:(u,v)=>v==null?'—':v.toFixed(d.u==='V'?2:d.u==='A'?1:0)+' '+d.u}))]};
     gplots.push(new uPlot(opts,[xs,...ys],card))}
 }
+function togglePrefs(open){const el=$('prefs');const o=open===undefined?!el.classList.contains('open'):open;
+  el.classList.toggle('open',o);$('prefsbtn').classList.toggle('go',o);if(o)settick(true);
+  try{history.replaceState(null,'',o?'#prefs':location.pathname)}catch(e){}}
 async function settick(force){try{if(!force&&$('prefs').contains(document.activeElement))return;
   const S=await fetch('/api/settings').then(r=>r.json());
   $('setform').innerHTML=S.fields.map(f=>{const v=S.values[f.id];let inp;
@@ -570,14 +579,19 @@ async function beeptick(){try{const b=await fetch('/api/beeps').then(r=>r.json()
   if(!$('beeppatterns').innerHTML)$('beeppatterns').innerHTML='<tr><td>Summer</td><td>Mönster</td><td>Betydelse</td><td>Åtgärd</td><td>Syns i appens data?</td></tr>'+b.patterns.map(p=>`<tr><td>${p[0]}</td><td>${p[1]}</td><td><b>${p[2]}</b></td><td>${p[3]}</td><td class="note">${p[4]}</td></tr>`).join('');
   if(!$('beepbits').innerHTML)$('beepbits').innerHTML='<tr><td>Bit</td><td>Begode-appen</td><td>WheelLog</td></tr>'+b.alert_bits.map(x=>`<tr><td><code>${x.bit}</code></td><td>${x.app}</td><td class="note">${x.wheellog}</td></tr>`).join('');
 }catch(e){}}
+async function prefshint(){try{const S=await fetch('/api/settings').then(r=>r.json());
+  const miss=[['rider_kg','din vikt'],['wheel_kg','hjulets vikt']].filter(([k])=>S.values[k]==null).map(([,l])=>l);
+  $('prefshint').style.display=miss.length?'block':'none';
+  $('prefshint').innerHTML=miss.length?`⚙️ Fyll i ${miss.join(' och ')} under <button class="btn" onclick="togglePrefs(true)">Inställningar</button> uppe till höger – behövs för jämförelsen av höjd och energi med fysiken.`:''}catch(e){}}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
 tick();logtick();
 // deep links: #pos opens the tab, #ride=<id> opens a ride on the map
 (()=>{const h=location.hash;const m=h.match(/ride=(\d+)/);
   if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m){const md=h.match(/mode=(\w+)/);if(md)rideMode=md[1];setTimeout(()=>showRide(+m[1]),300)}}
+  else if(h==='#prefs')togglePrefs(true);
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
-guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
+guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);alarmtick();setInterval(alarmtick,1000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

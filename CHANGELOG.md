@@ -2,6 +2,11 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.15.2 – 2026-10-03
+- **Settings moved to the header**: an always visible "⚙️ Inställningar" button opens the
+  settings as a panel over any tab (deep link `#prefs`); the Live tab shows a reminder when
+  the weights are missing.
+
 ## 0.15.1 – 2026-10-03
 - Fix: the **Inställningar** tab was empty – its section shared the id `settings` with a box on
   the Live tab, so the tab button showed that box instead. Renamed to `prefs`; a test now

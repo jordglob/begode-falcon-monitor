@@ -45,7 +45,7 @@ The wheel accepts only one BLE connection at a time – close the wheel's phone 
 | Styrning | wheel control – off by default, local computer only, write twice → read once, command log with before/after field diff; **settings backup** (manual, daily, on change) with download and restore |
 | Pip-larm | **why is the wheel beeping?** live causes, event log, black box, "I hear beeping now" button, instructions and investigation – see [docs/beeps.md](docs/beeps.md) |
 | Grafer | voltage, current, cells, temperatures, sag, speed over 1 h – 30 days |
-| Inställningar | weights (for the physics comparison), elevation source, terrain model folder, thresholds; links to Geotorget |
+| ⚙️ Inställningar (header button) | weights (for the physics comparison), elevation source, terrain model folder, thresholds; links to Geotorget |
 | Logg | events, connection stability, **release the link** for the phone app |
 
 The header shows the app version and the signal strength (RSSI) from the last scan. Live RSSI of
