@@ -27,6 +27,7 @@ from . import control as ctl
 from .verify import Verifier
 from .backup import Backups, RESTORABLE
 from .gps import GpsReader
+from . import rides as rides_mod
 from .protocol import ascii_replies
 from .protocol import FIELD_INFO, UNCERTAIN, decode_p0, decode_p1, decode_p4, decode_p7, Frame
 import json
@@ -166,7 +167,8 @@ async def guard_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_app):
-    tasks = [asyncio.create_task(link.run()), asyncio.create_task(sampler()),
+    ble_on = os.environ.get("FALCON_BLE", "1") != "0"
+    tasks = [*([asyncio.create_task(link.run())] if ble_on else []), asyncio.create_task(sampler()),
              *([asyncio.create_task(gps.run())] if GPS_ON else []),
              asyncio.create_task(guard_loop())]
     log_event("Tjänsten startad (endast läsning, inga kommandon skickas)")
@@ -451,6 +453,21 @@ def api_gps():
         return {"status": "avstängd (FALCON_GPS=0)", "fix": False, "state": {}, "satellites": [],
                 "stats": {}, "stored_points": 0}
     return {**gps.report(), "stored_points": store.gps_count()}
+
+
+@app.get("/api/rides")
+def api_rides(days: float = 90):
+    pts = rides_mod.load_points(store.db, time.time() - days * 86400)
+    return {"rides": [rides_mod.summary(r) for r in reversed(rides_mod.segment(pts))]}
+
+
+@app.get("/api/rides/{ride_id}")
+def api_ride(ride_id: int):
+    pts = rides_mod.load_points(store.db, ride_id - 1)
+    for r in rides_mod.segment(pts):
+        if int(r[0]["ts"]) == ride_id:
+            return {**rides_mod.summary(r), "track": rides_mod.track(r)}
+    return _err(Exception("turen finns inte"), 404)
 
 
 @app.get("/api/history")

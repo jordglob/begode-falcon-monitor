@@ -35,7 +35,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 <header><h1>Falcon Pro</h1><span id="conn"><span class="dot" id="dot"></span><span id="status">—</span></span>
 <span id="sig" style="font-size:13px;color:var(--mut)"></span>
 <span class="ro" style="margin-left:auto">🔒 endast läsning · <span id="ver"></span></span></header>
-<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="log">Logg</button></nav>
+<nav><button data-t="live" class="act">Live</button><button data-t="energy">Energilager</button><button data-t="health">Batterihälsa</button><button data-t="pos">Position & turer</button><button data-t="all">Alla parametrar</button><button data-t="ctl">Styrning</button><button data-t="log">Logg</button></nav>
 <main>
 <section id="live" class="act">
   <div class="card"><h2>Färd</h2><div class="grid" id="ride"></div></div>
@@ -66,6 +66,9 @@ table{width:100%;border-collapse:collapse;font-size:13px}td{padding:4px 6px;bord
 </section>
 <section id="pos">
   <div class="card"><h2>Position</h2><div class="grid" id="gpsmain"></div><div class="note" id="gpsnote"></div></div>
+  <div class="card"><h2>Turer</h2><table id="ridelist"></table>
+    <div id="ridemap" style="height:420px;border-radius:10px;margin-top:10px;display:none"></div>
+    <div id="ridelegend" class="note" style="margin-top:6px"></div><div id="ridestats" class="grid" style="margin-top:8px"></div></div>
   <div class="card"><h2>Satelliter</h2><table id="gpssats"></table></div>
   <div class="card"><h2>Statistik</h2><div class="grid" id="gpsstats"></div>
     <div class="note">Positioner sparas var 5:e sekund tillsammans med hjulets egen fart – underlaget för turer på karta med färgskala för farten (kommer).</div></div>
@@ -94,7 +97,7 @@ const fmt=(v,d=1,u='')=>v==null||Number.isNaN(v)?'—':(typeof v==='number'?v.to
 const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('act'));
-  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos')gpstick();
+  b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}
   try{localStorage.setItem('tab',b.dataset.t)}catch(e){}});
 try{const t=localStorage.getItem('tab');if(t)document.querySelector(`nav button[data-t=${t}]`)?.click()}catch(e){}
 
@@ -270,9 +273,48 @@ async function gpstick(){try{if(!$('pos').classList.contains('act'))return;const
   $('gpsstats').innerHTML=kv('Tid till första position',T.first_fix_s!=null?T.first_fix_s+' s':'—')+kv('Andel med position',fmt(T.fix_share_pct,0,'%'))
     +kv('Avläsningar',fmt(T.polls,0))+kv('Sparade punkter',fmt(g.stored_points,0))+kv('Igång',T.running_s!=null?fmt(T.running_s/60,0,'min'):'—');
 }catch(e){}}
+// ---------- rides on a map, speed as a single-hue sequential ramp (light = slow, dark = fast)
+const RAMP=['#86b6ef','#6da7ec','#5598e7','#3987e5','#2a78d6','#256abf','#1c5cab','#184f95','#104281','#0d366b'];
+let LMAP=null,LLAYER=null,rideSel=null,ridesLoaded=0;
+function loadLeaflet(){return new Promise((ok,bad)=>{if(window.L)return ok();
+  const c=document.createElement('link');c.rel='stylesheet';c.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';document.head.appendChild(c);
+  const j=document.createElement('script');j.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';j.onload=ok;j.onerror=bad;document.head.appendChild(j)})}
+const dur=s=>s>=3600?`${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min`:`${Math.round(s/60)} min`;
+async function ridestick(force){try{if(!$('pos').classList.contains('act'))return;if(!force&&Date.now()-ridesLoaded<30000)return;ridesLoaded=Date.now();
+  const r=await fetch('/api/rides').then(r=>r.json());
+  $('ridelist').innerHTML=r.rides.length?'<tr><td>Start</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Hjulets fart</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
+    <td>${new Date(x.start*1000).toLocaleString('sv-SE',{dateStyle:'short',timeStyle:'short'})}</td><td>${fmt(x.distance_km,2,'km')}</td><td>${dur(x.moving_s)}</td>
+    <td>${fmt(x.max_kmh,0,'km/h')}</td><td>${fmt(x.avg_moving_kmh,0,'km/h')}</td><td class="note">${x.wheel_speed_share_pct} % av punkterna</td>
+    <td><button class="btn" onclick="showRide(${x.id})">Visa på karta</button></td></tr>`).join('')
+    :'<tr><td class="note">Inga turer ännu. En tur sparas när GPS:en rör sig minst 30 s över 3 km/h och minst 100 m.</td></tr>';
+}catch(e){}}
+async function showRide(id){rideSel=id;ridestick(true);try{history.replaceState(null,'','#ride='+id)}catch(e){}
+  try{await loadLeaflet()}catch(e){$('ridelegend').textContent='Kartan kunde inte laddas (kräver internet för kartbilder).';return}
+  const r=await fetch('/api/rides/'+id).then(r=>r.json());if(!r.track)return;
+  const el=$('ridemap');el.style.display='block';
+  if(!LMAP){LMAP=L.map(el);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(LMAP)}
+  if(LLAYER)LLAYER.remove();LLAYER=L.layerGroup().addTo(LMAP);
+  const T=r.track,vmax=Math.max(10,...T.map(p=>p[2]||0)),step=vmax/RAMP.length;
+  const col=v=>RAMP[Math.min(RAMP.length-1,Math.floor((v||0)/step))];
+  L.polyline(T.map(p=>[p[0],p[1]]),{color:'#fff',weight:9,opacity:.9}).addTo(LLAYER);          // surface casing
+  for(let i=1;i<T.length;i++){const a=T[i-1],b=T[i],v=b[2];
+    L.polyline([[a[0],a[1]],[b[0],b[1]]],{color:col(v),weight:6,opacity:1,lineCap:'round'})
+     .bindTooltip(`${v!=null?v.toFixed(1)+' km/h':'—'} · ${new Date(b[3]*1000).toLocaleTimeString('sv-SE')}`,{sticky:true}).addTo(LLAYER)}
+  L.circleMarker([T[0][0],T[0][1]],{radius:7,color:'#fff',weight:2,fillColor:'#1d5e33',fillOpacity:1}).bindTooltip('Start').addTo(LLAYER);
+  L.circleMarker([T.at(-1)[0],T.at(-1)[1]],{radius:7,color:'#fff',weight:2,fillColor:'#7a1f1a',fillOpacity:1}).bindTooltip('Mål').addTo(LLAYER);
+  LMAP.invalidateSize();LMAP.fitBounds(L.latLngBounds(T.map(p=>[p[0],p[1]])),{padding:[20,20]});
+  $('ridelegend').innerHTML='Fart: '+RAMP.map((c,i)=>`<span style="display:inline-block;width:26px;height:10px;background:${c};vertical-align:middle"></span>`).join('')
+    +` &nbsp;0 → ${vmax.toFixed(0)} km/h (ljus = långsamt, mörk = snabbt). Håll musen över spåret för fart och tid.`;
+  $('ridestats').innerHTML=kv('Sträcka',fmt(r.distance_km,2,'km'))+kv('Tid i rörelse',dur(r.moving_s))+kv('Total tid',dur(r.duration_s))
+    +kv('Maxfart',fmt(r.max_kmh,1,'km/h'))+kv('Snittfart i rörelse',fmt(r.avg_moving_kmh,1,'km/h'))+kv('Punkter',r.points);
+}
 async function logtick(){try{const ev=await fetch('/api/log').then(r=>r.json());
   $('events').innerHTML=ev.map(x=>`<tr><td>${new Date(x.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${x.msg}</td></tr>`).join('')}catch(e){}}
-tick();logtick();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);gpstick();setInterval(gpstick,2000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
+tick();logtick();
+// deep links: #pos opens the tab, #ride=<id> opens a ride on the map
+(()=>{const h=location.hash;const m=h.match(/ride=(\d+)/);
+  if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m)setTimeout(()=>showRide(+m[1]),300)}})();
+guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);gpstick();setInterval(gpstick,2000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},2000);setInterval(tick,1000);setInterval(logtick,5000);
 </script>
 </body>
 </html>

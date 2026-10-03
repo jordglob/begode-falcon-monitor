@@ -2,6 +2,16 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.11.0 – 2026-10-03
+- **Rides on a map**: rides are cut from the stored GPS points (gap > 2 min or 3 min without
+  movement ends a ride; needs ≥30 s moving above 3 km/h and ≥100 m). List with distance, time
+  in motion, max and average speed; the map (Leaflet + OpenStreetMap) draws the track coloured
+  by speed on a single-hue ramp (light = slow, dark = fast) with a legend, hover tooltip with
+  speed and time, start/finish markers. The wheel's own speed is used where available.
+- Deep links `#pos` and `#ride=<id>`.
+- Dry run without wheel or GPS: `tools/demo_ride.py` writes synthetic rides (Greenwich Park);
+  `FALCON_BLE=0` runs the server without Bluetooth.
+
 ## 0.10.0 – 2026-10-03
 - **Position** tab (GPS): fix type, position (OpenStreetMap link), rough accuracy, satellites
   used/in view with signal strength, HDOP/PDOP, GPS speed, course, altitude, UTC time, time to
