@@ -2,6 +2,11 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.16.2 – 2026-10-03
+- Fix: a ride analysed while it was still going on kept its first (short) analysis – the cache
+  key now includes the ride's point count and end time, so a grown ride is recomputed
+  (seen live: a 0.59 km ride showed 0.15 km and no climbs).
+
 ## 0.16.1 – 2026-10-03
 - **Verification waits for a slow wheel** (seen live: tiltback showed the new value only after
   the first fresh packet): every fresh frame is read for up to 5 s until the wheel shows the

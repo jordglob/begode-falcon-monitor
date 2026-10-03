@@ -700,15 +700,17 @@ def _ride_points(ride_id: int):
 
 
 def _analysis(ride_id: int, use_cache: bool = True):
-    key = _analysis_key()
+    r = _ride_points(ride_id)
+    if r is None:
+        return None
+    # the key includes the ride's length and end: a ride analysed while it was still going on
+    # must be recomputed when it has grown (seen live: a 0.6 km ride showed 0.15 km)
+    key = _analysis_key() + f"|{len(r)}|{int(r[-1]['ts'])}"
     if use_cache:
         row = store.db.execute("SELECT result FROM ride_analysis WHERE ride_id=? AND version=? AND source=?",
                                (ride_id, rideanalysis.ANALYSIS_VERSION, key)).fetchone()
         if row:
             return json.loads(row[0])
-    r = _ride_points(ride_id)
-    if r is None:
-        return None
     res = rideanalysis.analyze(r, SETTINGS, dem, settings_mod.total_mass(SETTINGS))
     store.db.execute("INSERT OR REPLACE INTO ride_analysis VALUES (?,?,?,?,?)",
                      (ride_id, rideanalysis.ANALYSIS_VERSION, key, time.time(), json.dumps(res)))

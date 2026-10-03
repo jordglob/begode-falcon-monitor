@@ -224,3 +224,22 @@ def test_api_late_change_is_logged(api):
     log = c.get("/api/control").json()["log"]
     assert log[0]["status"] == "late_verified" and log[0]["after"] == "6"
     fl.write = orig_write
+
+
+def test_analysis_cache_follows_a_growing_ride(api, monkeypatch):
+    c, fl, touch, srv = api
+    calls = []
+    real = srv.rideanalysis.analyze
+
+    def counting(*a, **k):
+        calls.append(len(a[0]))
+        return real(*a, **k)
+    monkeypatch.setattr(srv.rideanalysis, "analyze", counting)
+    pts = [{"ts": 1000 + i * 2, "lat": 51 + i * 1e-4, "lon": 0.0, "speed_kmh": 15, "wheel_speed_kmh": 15,
+            "sats": 9, "hdop": 1, "alt_m": 10.0} for i in range(40)]
+    monkeypatch.setattr(srv, "_ride_points", lambda rid: pts)
+    srv._analysis(1000)
+    srv._analysis(1000)                      # cached
+    pts.extend({**pts[-1], "ts": pts[-1]["ts"] + 2 * (j + 1), "lat": pts[-1]["lat"] + (j + 1) * 1e-4} for j in range(20))
+    srv._analysis(1000)                      # ride grew -> recomputed
+    assert calls == [40, 60]
