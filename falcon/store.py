@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -25,11 +26,40 @@ CREATE TABLE IF NOT EXISTS guard_events (ts REAL, level TEXT, code TEXT, where_ 
 """
 
 
+class ThreadDB:
+    """One SQLite connection per thread, behind a single object.
+
+    The web endpoints run in worker threads while the BLE/guard loops run in the event-loop
+    thread. Sharing one connection between them corrupted results now and then ("another row
+    available", rows of the wrong shape) and once killed the history sampler. SQLite itself is
+    fine with several connections to one WAL database, so every thread gets its own."""
+
+    def __init__(self, path: Path):
+        self._path = str(path)
+        self._local = threading.local()
+
+    def _conn(self) -> sqlite3.Connection:
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = sqlite3.connect(self._path, timeout=10)
+            c.execute("PRAGMA journal_mode=WAL")       # readers never block the writer
+            self._local.conn = c
+        return c
+
+    def execute(self, *args):
+        return self._conn().execute(*args)
+
+    def executescript(self, script: str):
+        return self._conn().executescript(script)
+
+    def commit(self) -> None:
+        self._conn().commit()
+
+
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path, check_same_thread=False, timeout=10)
-        self.db.execute("PRAGMA journal_mode=WAL")      # readers never block the writer
+        self.db = ThreadDB(path)
         self.db.executescript(SCHEMA)
         self._migrate()
 

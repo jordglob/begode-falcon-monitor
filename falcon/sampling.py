@@ -56,8 +56,11 @@ def segments(bank: int, cells_mv: list[int]) -> list[tuple[int, int, list[int]]]
 
 
 def simultaneous_spread(cells_mv: list[int]) -> int | None:
-    """Largest max-min inside any half-pack of one string (24 cells)."""
-    parts = [cells_mv[i:i + HALF] for i in range(0, len(cells_mv), HALF)]
+    """Largest max-min between cells of one string (24 cells) that came in the same frame AND
+    belong to the same half-pack: cells 1-8, 9-12, 13-16, 17-24. A half-pack reaches us in two
+    frames, and the BMS may have measured again in between (ride 2026-10-04: up to 279 mV inside
+    an assembled "half"), so only a frame part is known to be one instant."""
+    parts = [seg for bank in range(len(cells_mv) // 8) for _h, _first, seg in segments(bank, cells_mv[bank * 8:bank * 8 + 8])]
     parts = [p for p in parts if len(p) >= 2]
     return max(max(p) - min(p) for p in parts) if parts else None
 

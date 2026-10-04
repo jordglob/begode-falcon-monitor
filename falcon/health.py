@@ -337,6 +337,7 @@ class Health:
                             r = (b_cells[c] - mv) / d_i      # mV/A = mΩ
                             if 0 < r < 200:
                                 self.db.execute("INSERT INTO cell_ir VALUES (?,?,?)", (ts, c, r))
+                    self.db.commit()
             return
         prev = [h for h in self.hist if h[0] < ts]
         if prev and abs(current - prev[-1][1]) >= STEP_A and self._flat(prev[-1][0] - STEP_SETTLE_S, prev[-1][0]):

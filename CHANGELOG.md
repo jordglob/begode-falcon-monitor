@@ -2,6 +2,38 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.25.1 – 2026-10-04
+- A break of up to 1.5 hours (was 45 minutes) can be joined into the same ride.
+
+## 0.25.0 – 2026-10-04
+- **Join ride parts**: a ride is cut at every break longer than 3 minutes and whenever the
+  positions stop (computer asleep, GPS off). The Turer list now suggests which consecutive parts
+  belong together – a break at the same place (≤ 300 m, ≤ 45 min) or a gap without positions that
+  could be ridden in the time – with the reason and a confidence, and joins them on request
+  (`POST /api/rides/merge`, undo with `/api/rides/unmerge` or "dela upp"). A merge is only a
+  stored time span; the points are untouched. The joined ride contains every stored point from
+  the first start to the last end.
+- Ride summaries no longer count a hole in the data as moving time; the distance across such a
+  hole is reported separately (`gap_km`) and left out of the average speed.
+
+## 0.24.0 – 2026-10-04
+- **Live map always on**: the Position tab shows where you are and the trail of the last 15
+  minutes even when no ride is going on; a ride in progress stays "live" through stops of up to
+  3 minutes (it used to disappear after 60 s at a red light).
+- Ride energy survives an app restart in the middle of a ride: the cumulative counters continue
+  from the last stored value, and a counter that started over is made continuous in the analysis.
+- "Spridning" compares only cells from the same frame part (1–8, 9–12, 13–16, 17–24). A half-pack
+  arrives in two frames and the BMS may measure again in between, which still gave up to 279 mV
+  of false spread on a real ride.
+- `python -m tools.record_state OUT.jsonl` records everything the app sees twice a second for a
+  whole ride or charge (the app itself keeps 5 s samples and black boxes around alarms).
+
+## 0.23.2 – 2026-10-04
+- Fix: the database connection was shared between the web endpoints (worker threads) and the
+  BLE/guard loops. Now and then that gave errors like "another row available" or rows of the
+  wrong shape (18 failed requests in one morning) and it is the likely cause of the history
+  sampler dying on 2026-10-03. Every thread now has its own connection to the same WAL database.
+
 ## 0.23.1 – 2026-10-04
 - First recorded charge (25 min, wheel on): the controller does not see the charge current, so
   the BMS field is the only source while charging – and there it is steady and plausible

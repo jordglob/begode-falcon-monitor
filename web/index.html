@@ -91,7 +91,7 @@ section.overlay.open{display:block}
     <div class="grid" id="livestats" style="margin-top:8px"></div>
     <div class="note">Uppdateras varannan sekund medan datorn är med på turen. Titta inte på skärmen när du kör – larmen hörs.</div></div>
   <div class="card"><h2>Position</h2><div class="grid" id="gpsmain"></div><div class="note" id="gpsnote"></div></div>
-  <div class="card"><h2>Turer</h2><table id="ridelist"></table>
+  <div class="card"><h2>Turer</h2><div id="ridemerge"></div><table id="ridelist"></table>
     <div id="ridemodes" style="margin-top:10px;display:none"></div>
     <div id="ridemap" style="height:420px;border-radius:10px;margin-top:6px;display:none"></div>
     <div id="ridelegend" class="note" style="margin-top:6px"></div><div id="ridestats" class="grid" style="margin-top:8px"></div></div>
@@ -381,10 +381,18 @@ function loadLeaflet(){return new Promise((ok,bad)=>{if(window.L)return ok();
   const c=document.createElement('link');c.rel='stylesheet';c.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';document.head.appendChild(c);
   const j=document.createElement('script');j.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';j.onload=ok;j.onerror=bad;document.head.appendChild(j)})}
 const dur=s=>s>=3600?`${Math.floor(s/3600)} h ${Math.round(s%3600/60)} min`:`${Math.round(s/60)} min`;
+async function mergeRides(ids){try{await fetch('/api/rides/merge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});ridestick(true)}catch(e){}}
+async function unmergeRide(id){try{await fetch('/api/rides/unmerge',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});ridestick(true)}catch(e){}}
 async function ridestick(force){try{if(!$('pos').classList.contains('act'))return;if(!force&&Date.now()-ridesLoaded<30000)return;ridesLoaded=Date.now();
   const r=await fetch('/api/rides').then(r=>r.json());r.rides.forEach(x=>rideSlugs[x.id]=x.slug);
+  const hm=t=>new Date(t*1000).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'});
+  $('ridemerge').innerHTML=(r.merge_suggestions||[]).map(m=>`<div style="border:1px solid #3a4150;border-radius:8px;padding:8px 10px;margin-bottom:8px">
+    <b>Förslag:</b> slå ihop ${m.parts} delar till en tur – ${new Date(m.start*1000).toLocaleDateString('sv-SE')} ${hm(m.start)}–${hm(m.end)}, ${fmt(m.distance_km,1,'km')}
+    <span class="${m.confidence==='hög'?'ok':'warn'}" style="font-size:13px">(säkerhet: ${m.confidence})</span>
+    <button class="btn" style="margin-left:8px" onclick="mergeRides([${m.ids.join(',')}])">Slå ihop</button>
+    <div class="note">${m.text}</div></div>`).join('');
   $('ridelist').innerHTML=r.rides.length?'<tr><td>Tur</td><td>Sträcka</td><td>I rörelse</td><td>Max</td><td>Snitt</td><td>Högsta effekt</td><td>Lägsta marginal</td><td>Hjulets fart</td><td>Fartrimlighet</td><td></td></tr>'+r.rides.map(x=>`<tr${x.id===rideSel?' style="background:#22262f"':''}>
-    <td><b>${x.name||new Date(x.start*1000).toLocaleString('sv-SE')}</b></td><td>${fmt(x.distance_km,2,'km')}</td><td>${dur(x.moving_s)}</td>
+    <td><b>${x.name||new Date(x.start*1000).toLocaleString('sv-SE')}</b>${x.parts>1?` <span class="note">⛓ ${x.parts} delar · <a href="#" onclick="unmergeRide(${x.id});return false">dela upp</a></span>`:''}</td><td>${fmt(x.distance_km,2,'km')}</td><td>${dur(x.moving_s)}</td>
     <td>${fmt(x.max_kmh,0,'km/h')}</td><td>${fmt(x.avg_moving_kmh,0,'km/h')}</td>
     <td>${fmt(x.power_max_w,0,'W')}</td><td>${x.min_margin_pct!=null?`<span class="${x.min_margin_pct<=20?'bad':x.min_margin_pct<=30?'warn':'ok'}">${x.min_margin_pct.toFixed(0)} %</span>`:'—'}</td><td class="note">${x.wheel_speed_share_pct} % av punkterna</td>
     <td>${x.spin_s||x.carried_s?`<span class="warn">${x.spin_s?'⚠️ snurrar '+x.spin_s+' s ':''}${x.carried_s?'⚠️ bärs '+x.carried_s+' s':''}</span>`:(x.checked_share_pct?`<span class="ok">✅</span> <span class="note">${x.checked_share_pct} % kontrollerat</span>`:'<span class="note">kan ej bedömas</span>')}</td>
@@ -618,12 +626,14 @@ async function prefshint(){try{const S=await fetch('/api/settings').then(r=>r.js
   $('prefshint').innerHTML=miss.length?`⚙️ Fyll i ${miss.join(' och ')} under <button class="btn" onclick="togglePrefs(true)">Inställningar</button> uppe till höger – behövs för jämförelsen av höjd och energi med fysiken.`:''}catch(e){}}
 let LIVEMAP=null,LIVELAYER=null,liveFollow=true;
 async function livetick(){try{if(!$('pos').classList.contains('act'))return;const LV=await fetch('/api/rides/live').then(r=>r.json());
-  $('livecard').style.display=LV.live?'block':'none';if(!LV.live)return;
-  const S=LV.summary,T=LV.totals||{},N=LV.now||{};
-  $('livecard').querySelector('h2').textContent='🔴 '+S.name+' – pågår';
+  const hasPos=LV.track&&LV.track.length>0;
+  $('livecard').style.display=(LV.live||hasPos)?'block':'none';if(!LV.live&&!hasPos)return;
+  const S=LV.summary||{},T=LV.totals||{},N=LV.now||{};
+  $('livecard').style.outlineColor=LV.live?'var(--ok)':'var(--mut)';
+  $('livecard').querySelector('h2').textContent=LV.live?'🔴 '+S.name+' – pågår':'📍 Livekarta – ingen tur pågår just nu';
   $('livenow').innerHTML=kv('Fart nu',fmt(N.speed_kmh,1,'km/h'))+kv('Säkerhetsmarginal',N.margin!=null?`<span class="${N.margin<=20?'bad':N.margin<=30?'warn':'ok'}">${N.margin.toFixed(0)} %</span>`:'—')
-    +kv('Effekt nu',fmt(N.power_w,0,'W'))+kv('Larm under turen',LV.alarms?`<span class="bad">${LV.alarms}</span>`:'<span class="ok">0</span>');
-  $('livestats').innerHTML=kv('Sträcka',fmt(S.distance_km,2,'km'))+kv('Tid',dur(S.duration_s))+kv('Höjdmeter ↑ / ↓',`${fmt(T.ascent_m,0)} / ${fmt(T.descent_m,0)} m`)
+    +kv('Effekt nu',fmt(N.power_w,0,'W'))+(LV.live?kv('Larm under turen',LV.alarms?`<span class="bad">${LV.alarms}</span>`:'<span class="ok">0</span>'):'');
+  $('livestats').innerHTML=!LV.live?'':kv('Sträcka',fmt(S.distance_km,2,'km'))+kv('Tid',dur(S.duration_s))+kv('Höjdmeter ↑ / ↓',`${fmt(T.ascent_m,0)} / ${fmt(T.descent_m,0)} m`)
     +kv('Energi ut / återvunnet',`${fmt(T.wh_out,1)} / ${fmt(T.wh_regen,1)} Wh`)+kv('Förbrukning',fmt(T.wh_per_km,1,'Wh/km'))
     +LV.max.filter(x=>['speed','power','regen','current','margin'].includes(x.key)).map(x=>kv(x.label,`${x.value} ${x.unit}`)).join('');
   try{await loadLeaflet()}catch(e){return}
@@ -699,7 +709,7 @@ const TIPS={
 'Laddnivå (gissad)':'Laddnivå skattad ur cellspänningen. Stämmer bara i vila; under last visar den för lågt.',
 'Temp min / max (8 givare)':'Lägsta och högsta temperatur bland batteriets åtta temperaturgivare (fyra per paket).',
 'Cell min–max':'Lägsta och högsta cellspänning bland alla 48 celler just nu.',
-'Spridning':'Största skillnad mellan celler som mätts i samma ögonblick (inom ett halvpaket om 12 celler). Gäller även under körning. Stort värde = en cell avviker på riktigt.',
+'Spridning':'Största skillnad mellan celler som mätts i samma ögonblick (samma mätram: cell 1–8, 9–12, 13–16 eller 17–24 i en sträng). Gäller även under körning. Stort värde = en cell avviker på riktigt.',
 'Spridning hela batteriet':'Skillnaden mellan högsta och lägsta av alla 48 celler. Halvpaketen mäts vid olika tidpunkter, så värdet visas bara när batteriet vilar.',
 'Busspänning':'Spänningen som moderkortet mäter, uppskalad till hela batteriet.',
 'Spänningsfall':'Hur många millivolt spänningen sjunker per ampere. Ett mått på batteriets inre motstånd – lägre är bättre.',

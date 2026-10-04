@@ -25,6 +25,22 @@ MAX_GRADE = 30.0
 G = 9.81
 
 
+
+def _unwrap(vals: list) -> list:
+    """Cumulative counters that started over (the app was restarted during the ride) are made
+    continuous again: a drop means a restart, so everything after it is lifted by the last value."""
+    out, offset, prev = [], 0.0, None
+    for v in vals:
+        if v is None:
+            out.append(None)
+            continue
+        if prev is not None and v < prev - 1e-6:
+            offset += prev
+        prev = v
+        out.append(v + offset)
+    return out
+
+
 def _interp(xs: list[float], ys: list[float | None], x: float) -> float | None:
     """Linear interpolation over valid (non-None) samples; None outside or across gaps."""
     i = bisect.bisect_left(xs, x)
@@ -125,8 +141,8 @@ def analyze(points: list[dict], settings: dict, dem=None, mass_kg: float | None 
     if all(v is None for v in elev_raw):
         return {"ok": False, "reason": "ingen höjd (GPS-höjd saknas och ingen terrängmodell)"}
     ts = [p["ts"] for p in pts]
-    wo = [p.get("wh_out_cum") for p in pts]
-    wr = [p.get("wh_regen_cum") for p in pts]
+    wo = _unwrap([p.get("wh_out_cum") for p in pts])
+    wr = _unwrap([p.get("wh_regen_cum") for p in pts])
 
     # resample every STEP_M metres
     total = dist[-1]

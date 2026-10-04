@@ -89,3 +89,69 @@ def test_max_speed_ignores_gps_speed_from_a_poor_fix():
     old = {"speed_kmh": 30.0}                              # stored before sats/HDOP were kept
     wheel = {"speed_kmh": 44.7, "sats": 4, "hdop": 7.56, "wheel_speed_kmh": 39.0}
     assert [trusted_speed(p) for p in (good, poor, old, wheel)] == [36.0, None, 30.0, 39.0]
+
+
+def test_energy_counters_survive_an_app_restart_mid_ride():
+    from falcon.rideanalysis import _unwrap
+    assert _unwrap([10.0, 12.0, 18.5, 0.0, 0.4, None, 2.0]) == [10.0, 12.0, 18.5, 18.5, 18.9, None, 20.5]
+    assert _unwrap([1.0, 2.0, 3.0]) == [1.0, 2.0, 3.0] and _unwrap([None, None]) == [None, None]
+
+
+# ---------- joining ride parts ----------
+def _leg(t0, lat0, n=40, step_s=2.0, kmh=20.0, lon=0.0):
+    """A straight leg northwards at a steady speed."""
+    dlat = kmh / 3.6 * step_s / 111_320.0
+    return [{"ts": t0 + i * step_s, "lat": lat0 + i * dlat, "lon": lon, "speed_kmh": kmh,
+             "wheel_speed_kmh": kmh, "sats": 9, "hdop": 1.0} for i in range(n)]
+
+
+def _three_parts():
+    from falcon import rides
+    a = _leg(0, 51.0)                                   # 80 s
+    b = _leg(a[-1]["ts"] + 8 * 60, a[-1]["lat"])        # 8 min break at the same place
+    c = _leg(b[-1]["ts"] + 30 * 60, b[-1]["lat"] + 0.03)   # 30 min without points, 3.3 km further on
+    pts = a + b + c
+    segs = rides.segment(pts)
+    assert len(segs) == 3
+    return rides, pts, segs
+
+
+def test_merge_suggestion_names_breaks_and_gaps():
+    rides, pts, segs = _three_parts()
+    sug = rides.suggest_merges(segs)
+    assert len(sug) == 1 and sug[0]["parts"] == 3 and sug[0]["ids"] == [int(s[0]["ts"]) for s in segs]
+    kinds = [k["kind"] for k in sug[0]["links"]]
+    assert kinds == ["paus", "lucka"] and sug[0]["confidence"] == "medel"
+    assert "paus 8 min" in sug[0]["text"] and "utan positioner" in sug[0]["text"]
+
+
+def test_no_suggestion_across_a_long_break_or_an_impossible_jump():
+    rides = __import__("falcon.rides", fromlist=["x"])
+    a = _leg(0, 51.0)
+    late = _leg(a[-1]["ts"] + 2 * 3600, a[-1]["lat"])            # two hours later
+    far = _leg(a[-1]["ts"] + 5 * 60, a[-1]["lat"] + 0.2)         # 22 km away after 5 minutes
+    assert rides.suggest_merges(rides.segment(a + late)) == []
+    assert rides.suggest_merges(rides.segment(a + far)) == []
+
+
+def test_merge_joins_parts_and_can_be_undone():
+    rides, pts, segs = _three_parts()
+    spans = rides.add_span([], segs[0][0]["ts"] - 0.5, segs[1][-1]["ts"] + 0.5)
+    m = rides.merged(segs, pts, spans)
+    assert len(m) == 2 and int(m[0][0]["ts"]) == int(segs[0][0]["ts"])
+    s = rides.summary(m[0])
+    one = rides.summary(segs[0])["distance_km"] + rides.summary(segs[1])["distance_km"]
+    assert s["distance_km"] == pytest.approx(one, abs=0.05)        # same place: the break adds nothing
+    assert s["moving_s"] == rides.summary(segs[0])["moving_s"] + rides.summary(segs[1])["moving_s"]
+    assert s["duration_s"] > 8 * 60                                # the break is part of the ride's time
+    assert rides.merged(segs, pts, []) == segs                     # no spans = the automatic parts
+    assert rides.add_span(spans, segs[1][0]["ts"], segs[2][-1]["ts"]) == [[spans[0][0], segs[2][-1]["ts"]]]
+
+
+def test_a_break_of_an_hour_and_a_half_is_still_the_same_ride():
+    from falcon import rides
+    a = _leg(0, 51.0)
+    b = _leg(a[-1]["ts"] + 85 * 60, a[-1]["lat"])                # lunch: 85 minutes at the same place
+    sug = rides.suggest_merges(rides.segment(a + b))
+    assert len(sug) == 1 and sug[0]["parts"] == 2 and sug[0]["confidence"] == "medel"
+    assert "paus 85 min" in sug[0]["text"]

@@ -107,6 +107,12 @@ def _on_frame(f) -> None:
 
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
+# the energy counters are cumulative and stored with every GPS point; a restart in the middle of
+# a ride must not make them start from zero again (ride energy = difference between two points)
+_last_e = store.db.execute("SELECT wh_out_cum, wh_regen_cum FROM gps_samples WHERE wh_out_cum IS NOT NULL "
+                           "ORDER BY ts DESC LIMIT 1").fetchone()
+if _last_e:
+    energy.wh_out, energy.wh_regen = float(_last_e[0] or 0.0), float(_last_e[1] or 0.0)
 gate = ctl.ControlGate()          # OFF at every start
 thermal = Thermal(RModel(store.get_json("thermal_points") or []))
 cellreg.restore(store.get_json("cell_regression"))      # learned resistance survives restarts
@@ -637,16 +643,60 @@ def api_gps():
             "plausibility_now": {**live, "flag": rides_mod.plausibility(live) if rep.get("fix") else None}}
 
 
+def _segments(pts: list[dict]) -> list[list[dict]]:
+    """Rides as the user wants them: the automatic parts with the stored merges applied."""
+    return rides_mod.merged(rides_mod.segment(pts), pts, store.get_json("ride_merges") or [])
+
+
+def _ride_rows(pts: list[dict]) -> tuple[list[dict], list[list[dict]]]:
+    raw = rides_mod.segment(pts)
+    segs = rides_mod.merged(raw, pts, store.get_json("ride_merges") or [])
+    rows = []
+    for r in segs:
+        row = rides_mod.summary(r)
+        row["parts"] = sum(1 for x in raw if r[0]["ts"] <= x[0]["ts"] <= r[-1]["ts"])
+        rows.append(row)
+    return rows, segs
+
+
 @app.get("/api/rides")
 def api_rides(days: float = 90):
     pts = rides_mod.load_points(store.db, time.time() - days * 86400)
-    return {"rides": [rides_mod.summary(r) for r in reversed(rides_mod.segment(pts))]}
+    rows, segs = _ride_rows(pts)
+    return {"rides": list(reversed(rows)), "merge_suggestions": list(reversed(rides_mod.suggest_merges(segs)))}
+
+
+@app.post("/api/rides/merge")
+async def api_rides_merge(req: Request):
+    """Join the given rides (ids from /api/rides) into one. Reversible: only a time span is stored."""
+    ids = {int(i) for i in ((await req.json()).get("ids") or [])}
+    pts = rides_mod.load_points(store.db, 0)
+    hit = [r for r in _segments(pts) if int(r[0]["ts"]) in ids]
+    if len(hit) < 2:
+        return _err(Exception("minst två turer behövs"), 400)
+    spans = rides_mod.add_span(store.get_json("ride_merges") or [], hit[0][0]["ts"] - 0.5, hit[-1][-1]["ts"] + 0.5)
+    store.set_json("ride_merges", spans)
+    log_event(f"Turer sammanslagna: {len(hit)} delar från {rides_mod.ride_name(hit[0][0]['ts'])[0]}")
+    return {"ok": True, "id": int(hit[0][0]["ts"]), "spans": len(spans)}
+
+
+@app.post("/api/rides/unmerge")
+async def api_rides_unmerge(req: Request):
+    """Undo a merge: the ride falls apart into its automatic parts again."""
+    rid = int((await req.json()).get("id"))
+    spans = store.get_json("ride_merges") or []
+    keep = [sp for sp in spans if not (sp[0] <= rid + 1 and rid <= sp[1])]
+    if len(keep) == len(spans):
+        return _err(Exception("turen är inte sammanslagen"), 400)
+    store.set_json("ride_merges", keep)
+    log_event("Sammanslagen tur uppdelad igen")
+    return {"ok": True}
 
 
 @app.get("/api/rides/{ride_id:int}")
 def api_ride(ride_id: int):
     pts = rides_mod.load_points(store.db, ride_id - 1)
-    for r in rides_mod.segment(pts):
+    for r in _segments(pts):
         if int(r[0]["ts"]) == ride_id:
             return {**rides_mod.summary(r), "track": rides_mod.track(r)}
     return _err(Exception("turen finns inte"), 404)
@@ -778,7 +828,7 @@ def _analysis_key() -> str:
 
 def _ride_points(ride_id: int):
     pts = rides_mod.load_points(store.db, ride_id - 1)
-    for r in rides_mod.segment(pts):
+    for r in _segments(pts):
         if int(r[0]["ts"]) == ride_id:
             return r
     return None
@@ -812,6 +862,7 @@ def api_ride_analysis(ride_id: int, fresh: bool = False):
 
 
 LIVE_GAP_S = 60
+TRAIL_S = 15 * 60          # trail shown on the live map when no ride is going on
 
 
 @app.get("/api/rides/live")
@@ -819,12 +870,20 @@ def api_ride_live():
     """The ride going on right now (last GPS point < 60 s old), with running totals and the
     max values so far – for the live view."""
     pts = rides_mod.load_points(store.db, time.time() - 6 * 3600)
-    segs = rides_mod.segment(pts)
-    if not pts or not segs or time.time() - pts[-1]["ts"] > LIVE_GAP_S:
-        return {"live": False}
+    now = {"speed_kmh": (state.p0 or {}).get("speed_kmh"), "margin": alarms.report().get("safety_margin_pct"),
+           "power_w": round(energy_power_now()) if energy_power_now() is not None else None}
+    if not pts or time.time() - pts[-1]["ts"] > LIVE_GAP_S:
+        return {"live": False, "track": [], "now": now}          # no fresh position
+    # no ride going on: still show where we are and the trail of the last quarter of an hour
+    trail = rides_mod.track([p for p in pts if p["ts"] >= time.time() - TRAIL_S and p.get("lat") is not None])
+    segs = _segments(pts)
+    if not segs:
+        return {"live": False, "track": trail, "now": now}
     r = segs[-1]
-    if time.time() - r[-1]["ts"] > LIVE_GAP_S:
-        return {"live": False}
+    # still the same ride while standing at a light or taking a short break: a ride only ends
+    # after STOP_S without movement (rides.segment), so the live view must not give up sooner
+    if time.time() - r[-1]["ts"] > rides_mod.STOP_S:
+        return {"live": False, "track": trail, "now": now}
     # include the points after the segment's trimmed end (standing still now)
     r = [p for p in pts if p["ts"] >= r[0]["ts"]]
     summ = rides_mod.summary(r)
@@ -833,9 +892,7 @@ def api_ride_live():
                          store.beep_events_between(r[0]["ts"], r[-1]["ts"]), FIX_TS)
     tail = rides_mod.track(r)[-900:]
     return {"live": True, "summary": summ, "totals": a.get("totals") if a.get("ok") else None,
-            "max": mx["items"], "alarms": mx["alarms"]["count"], "track": tail,
-            "now": {"speed_kmh": (state.p0 or {}).get("speed_kmh"), "margin": alarms.report().get("safety_margin_pct"),
-                    "power_w": round(energy_power_now()) if energy_power_now() is not None else None}}
+            "max": mx["items"], "alarms": mx["alarms"]["count"], "track": tail, "now": now}
 
 
 def energy_power_now():
@@ -857,7 +914,7 @@ def api_ride_max(ride_id: int):
 @app.get("/api/analysis/grade-energy")
 def api_grade_energy(days: float = 365):
     pts = rides_mod.load_points(store.db, time.time() - days * 86400)
-    analyses = [a for a in (_analysis(int(r[0]["ts"])) for r in rides_mod.segment(pts)) if a and a.get("ok")]
+    analyses = [a for a in (_analysis(int(r[0]["ts"])) for r in _segments(pts)) if a and a.get("ok")]
     return {"rides": len(analyses), "bins": rideanalysis.grade_energy_bins(analyses)}
 
 

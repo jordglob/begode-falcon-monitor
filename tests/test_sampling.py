@@ -47,3 +47,10 @@ def test_new_frames():
     nf = NewFrames()
     assert nf.is_new(("A", 0), [1, 2]) and not nf.is_new(("A", 0), [1, 2])
     assert nf.is_new(("A", 1), [1, 2]) and nf.is_new(("A", 0), [1, 3])
+
+
+def test_simultaneous_spread_uses_frame_parts_not_whole_halves():
+    # cells 1-8 from one measurement, 9-12 from a later one under heavier load: same half-pack,
+    # different instants -> the 150 mV between them is not a cell fault
+    cells = [3900] * 8 + [3750, 3752, 3749, 3751] + [3900] * 12
+    assert simultaneous_spread(cells) == 3

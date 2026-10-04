@@ -165,3 +165,38 @@ def test_step_resistance_ignores_riding(tmp_path):
     for t in range(60):
         h._resistance(float(t), 5.0 + 20.0 * (t % 3), {k: v - 10 * (t % 3) for k, v in cells.items()})
     assert db.execute("SELECT count(*) FROM cell_ir").fetchone()[0] == 0
+
+
+# ---------- database used from several threads at once ----------
+def test_database_survives_readers_and_a_writer_in_parallel(tmp_path):
+    """Web endpoints read in worker threads while the loops write; every thread must get
+    consistent rows. (The live failures with one shared connection – 'another row available',
+    rows of the wrong shape – were rare and are not reproduced by this test; it guards the
+    per-thread connections, it does not prove the old bug.)"""
+    import threading
+    from falcon.store import Store
+    st = Store(tmp_path / "h.db")
+    for i in range(300):
+        st.add_guard_event("warn", "cell", f"w{i}", "x" * 40)
+    errors, stop = [], threading.Event()
+
+    def reader():
+        try:
+            while not stop.is_set():
+                rows = st.db.execute("SELECT ts, level, code, where_, text FROM guard_events").fetchall()
+                assert len(rows) >= 300 and all(len(r) == 5 and r[1] == "warn" for r in rows)
+                assert st.db.execute("SELECT count(*) FROM guard_events").fetchone()[0] >= 300
+        except Exception as e:          # noqa: BLE001 - the test is about any failure at all
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=reader) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for i in range(200):
+        st.add_guard_event("warn", "cell", f"n{i}", "y")
+        st.set_json("k", {"i": i})
+    stop.set()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert st.get_json("k") == {"i": 199}
