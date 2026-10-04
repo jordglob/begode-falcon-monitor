@@ -9,7 +9,7 @@ Dokumentet är tänkt som diskussionsunderlag, till exempel mot tillverkaren.
 slutsatser från mätdata, inte kunskap om hur koden ser ut.
 
 **Underlag:** 69 inspelade blackbox-filer från 2026-10-03 (ca 15 minuter rådata, 545 kompletta
-BMS-cykler, 2048 cellramar), mest från en kvällstur på 20 km.
+BMS-cykler, 2660 cellramar), mest från en kvällstur på 20 km.
 
 ---
 
@@ -18,7 +18,7 @@ BMS-cykler, 2048 cellramar), mest från en kvällstur på 20 km.
 | # | Förslag | Varför | Styrka i underlaget |
 |---|---|---|---|
 | 1 | BMS ska rapportera verklig, signerad ström per paket | Fältet följer inte lasten alls | Stark |
-| 2 | Alla celler i en ram ska mätas i samma ögonblick | Halvorna i en ram skiljer upp till 189 mV | Stark |
+| 2 | Alla celler ska mätas i samma ögonblick | Halvpaketen mäts var för sig och skiljer upp till 189 mV | Stark |
 | 3 | Tidsstämpel eller löpnummer i varje paket | Går inte att para ihop ström och cellspänning | Stark |
 | 4 | Hjulet ska självt jämföra de två paketens ström | Ett avbränt shuntmotstånd syns inte utifrån | Medel (följer av 1) |
 | 5 | Snabbare eller valbar takt för celldata | Celler kommer var 1,8 s | Medel |
@@ -49,25 +49,27 @@ shunt som mäter fel eller ett paket som inte bär ström. En app som försöker
 - Samma värde på båda raderna från samma BMS, uppdaterat i varje ram.
 - Om fältet i själva verket är något annat (t.ex. ett medelvärde eller en laddström): dokumentera vad.
 
-## 2. Cellspänningar: mät alla celler i en ram samtidigt
+## 2. Cellspänningar: mät alla celler samtidigt
 
-**Iakttagelse.** En cellram innehåller åtta celler. De fyra första och de fyra sista verkar
-mätas vid olika tidpunkter:
+**Iakttagelse.** Varje BMS verkar mäta sina 24 celler som två halvpaket om 12 (cell 1–12 och
+13–24), vart och ett vid sin egen tidpunkt. Skarven mellan cell 12 och 13 går mitt i den
+mellersta cellramen (cell 9–16):
 
-- Skillnaden mellan halvornas medelvärde: median 2 mV, 95:e percentilen 54 mV, högst 189 mV.
-- Inom en halva (samma ögonblick): median 5 mV, högst 49 mV.
+- Ramar med över 60 mV spridning: i 121 av 123 ligger steget exakt mellan cell 12 och 13.
+- Steget över skarven: median 2 mV, 95:e percentilen 54 mV, högst 189 mV.
+- Cell 9–12 mot cell 1–8 (samma halvpaket, olika ramar): median 1,4 mV skillnad.
+- Cell 9–12 mot cell 17–24 (olika halvpaket): median 14 mV, 90:e percentilen 62 mV.
 - Exempel: `3863 3867 3855 3824 | 4043 4042 4039 4042` mV i en och samma ram, vid ca 5 A.
+- Ungefär varannan cellram är en exakt upprepning av den förra – BMS hade inte mätt på nytt.
 
-Olika banker om åtta celler kommer dessutom i olika ramar, 0,3 s isär eller mer.
-
-**Följd.** "Cellspridning under last" går inte att beräkna. En spridning på 200 mV ser ut
-som en döende cell men är bara två mätningar vid olika belastning. Den verkliga spridningen
-mellan samtidigt mätta celler var liten – alla 48 celler låg inom −4,9 till +1,6 mV från sin
-grupp vid minst 10 A.
+**Följd.** "Cellspridning under last" över hela batteriet går inte att beräkna. En spridning på
+200 mV ser ut som en döende cell men är bara två mätningar vid olika belastning. Den verkliga
+spridningen mellan samtidigt mätta celler var liten.
 
 **Förslag.**
 - Frys alla 48 cellspänningar i samma ögonblick och skicka sedan ut dem ram för ram.
-- Om det inte går: skicka med strömmen i mätögonblicket för varje grupp, så att mottagaren kan kompensera.
+- Om det inte går: skicka med strömmen i mätögonblicket för varje halvpaket, så att mottagaren kan kompensera.
+- Markera i ramen om värdena är en ny mätning eller en upprepning.
 
 ## 3. Tidsstämpel eller löpnummer i varje paket
 
@@ -151,5 +153,7 @@ för att luckorna begränsar hur mycket av underlaget ovan som finns.
   Över 15 A finns bara ett tiotal mätpunkter för BMS-strömmen.
 - Laddning är inte inspelad. BMS-strömmen kan vara riktig under laddning.
 - Allt gäller ett enda hjul med en firmwareversion.
-- Att cellramens halvor mäts vid olika tidpunkter är den enklaste förklaringen till mönstret,
+- Att halvpaketen mäts vid olika tidpunkter är den enklaste förklaringen till mönstret,
   men den är inte bekräftad mot hjulets kod.
+- En tidigare version av det här dokumentet beskrev skarven som "fyra och fyra celler i en
+  ram". Fler data visade att enheten är halvpaket om 12 celler.
