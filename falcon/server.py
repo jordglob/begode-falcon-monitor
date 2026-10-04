@@ -28,6 +28,8 @@ from . import rideanalysis
 from .elevation import Dem
 from .beeps import BeepWatch
 from .sampling import ARTIFACT_BEEP_KEYS, NewFrames, pre_fix
+from . import margin as margin_mod
+from .energy import soc_from_cell_v
 from . import tripmax
 from .thermal import Thermal, RModel, charge_temp_ok, battery_temp
 from .cellhistory import CellHistory
@@ -89,6 +91,8 @@ def _on_frame(f) -> None:
         _publish({"bus": bus.on_p0(state.p0, state.p7, ts, store.baseline_sag_ohm())})
         v = bus.bus_v(state.p0)
         energy.add(ts, v, (state.p7 or {}).get("battery_current_a"), (state.p7 or {}).get("pwm_pct"))
+        pwm_model.add((state.p0 or {}).get("speed_kmh"), (state.p7 or {}).get("battery_current_a"), v,
+                      (state.p7 or {}).get("pwm_pct"))
     elif f.type == 7:
         guard.load_spread.trace.add(ts, bus.current(state.p7))
     elif f.type in (2, 3):
@@ -107,6 +111,7 @@ def _on_frame(f) -> None:
 
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
 store = Store(DB)
+pwm_model = margin_mod.PwmModel(store.get_json("pwm_model"))     # speed/current -> PWM, learned from packets
 # the energy counters are cumulative and stored with every GPS point; a restart in the middle of
 # a ride must not make them start from zero again (ride energy = difference between two points)
 _last_e = store.db.execute("SELECT wh_out_cum, wh_regen_cum FROM gps_samples WHERE wh_out_cum IS NOT NULL "
@@ -300,6 +305,7 @@ async def guard_loop() -> None:
             _auto_backup()
             store.set_json("thermal_points", list(thermal.model.points))
             store.set_json("cell_regression", cellreg.export())
+            store.set_json("pwm_model", pwm_model.export())
             cellhist.flush()
 
 
@@ -717,9 +723,31 @@ def api_link_resume():
     return {"ok": True}
 
 
+def _safe_speed() -> dict:
+    """Speed that still leaves 20 % margin at the battery's present no-load voltage."""
+    rp = None
+    if link.connected and time.time() - link.last_frame_ts < 5:
+        v, i = bus.bus_v(state.p0 or {}), bus.current(state.p7 or {}) or 0.0
+        if v is None:
+            return margin_mod.report(None, None, pwm_model, "")
+        v_rest, src = v + margin_mod.RP_OHM * i, "spänning och ström just nu"
+        est = bus.sag.estimate()
+        if est.get("ocv_v") and abs(est["ocv_v"] - v_rest) <= 4.0:     # 2-minute fit, when it is sane
+            v_rest, rp, src = est["ocv_v"], est.get("ohm"), "skattad tomgångsspänning (senaste 2 min)"
+    else:
+        row = store.db.execute("SELECT voltage_v, current_a FROM samples WHERE voltage_v IS NOT NULL "
+                               "ORDER BY ts DESC LIMIT 1").fetchone()
+        if not row:
+            return margin_mod.report(None, None, pwm_model, "")
+        v_rest, src = row[0] + margin_mod.RP_OHM * (row[1] or 0.0), "senast kända spänning (hjulet inte anslutet)"
+    rep = margin_mod.report(v_rest, rp, pwm_model, src)
+    rep["soc_pct"] = soc_from_cell_v(v_rest / 24.0)
+    return rep
+
+
 @app.get("/api/alarms")
 def api_alarms():
-    return alarms.report()
+    return {**alarms.report(), "safe": _safe_speed()}
 
 
 @app.post("/api/alarms/config")

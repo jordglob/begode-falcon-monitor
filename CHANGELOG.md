@@ -2,6 +2,15 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.26.0 – 2026-10-04
+- **Safe speed right now** on the safety-margin card: the speed that still leaves 20 % margin
+  (where the wheel starts beeping) at the battery's present no-load voltage – for steady riding,
+  for a hard load of 40 A, and the speed where PWM would reach 100 %. Based on a model fitted on
+  this wheel (motor voltage = 1.20 V per km/h + 0.37 V per A + 1.7 V; PWM = that / bus voltage)
+  which predicted 5800 later points down to 86 V with +0.3 ± 2.3 PWM points; at PWM ≥ 70 % it is
+  2.5 points on the cautious side. The coefficients are re-learned from the wheel's own packets
+  (`falcon/margin.py`), with the measured values as fallback.
+
 ## 0.25.1 – 2026-10-04
 - A break of up to 1.5 hours (was 45 minutes) can be joined into the same ride.
 

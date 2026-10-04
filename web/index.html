@@ -47,7 +47,7 @@ section.overlay.open{display:block}
   <div class="card" id="alarmbar" style="display:none"></div>
   <div class="card" id="thermcard"><h2>Batteriets effektreserv</h2><div id="thermbar"></div><div class="grid" id="thermgrid" style="margin-top:8px"></div>
     <div id="thermnotes"></div><div class="note">Tillgänglig effekt beräknas från den svagaste cellens spänning utan last och dess inre motstånd vid batteriets temperatur (inlärt). Rekommenderat = 70 % av max. Minsta tillåtna cellspänning under last: 3,2 V.</div></div>
-  <div class="card"><h2>Säkerhetsmarginal</h2><div class="grid" id="margin"></div>
+  <div class="card"><h2>Säkerhetsmarginal</h2><div class="grid" id="margin"></div><div class="note" id="safenote"></div>
     <div class="note">Marginal = 100 % − PWM: hur mycket motorkraft som finns kvar. Vid 100 % PWM kan hjulet inte längre hålla upp dig. Prognosen räknar 3 s framåt från de senaste 3 sekunderna.</div></div>
   <div class="card"><h2>Färd</h2><div class="grid" id="ride"></div></div>
   <div class="card"><h2>Inställningar som hjulet rapporterar (paket 4)</h2><div class="grid" id="settings"></div>
@@ -528,6 +528,12 @@ async function alarmtick(){try{const a=await fetch('/api/alarms').then(r=>r.json
   const m=a.safety_margin_pct;
   $('margin').innerHTML=kv('Säkerhetsmarginal',m!=null?`<span class="${m<=20?'bad':m<=30?'warn':'ok'}">${m.toFixed(0)} %</span>`:'—')
     +kv('PWM nu',fmt(a.pwm,0,'%'))+kv('PWM om 3 s (prognos)',fmt(a.predicted_pwm_3s,0,'%'));
+  const sf=a.safe||{};
+  if(sf.ok){$('margin').innerHTML+=kv('Säker fart nu – jämn fart',`<span class="ok">${sf.cruise_kmh} km/h</span>`)
+      +kv('Säker fart nu – hård belastning',`<span class="warn">${sf.hard_kmh} km/h</span>`)
+      +kv('Motorn tar slut vid',`<span class="bad">${sf.cutout_kmh} km/h</span>`);
+    $('safenote').textContent=`Säker fart = farten där ${sf.margin_pct} % marginal återstår (hjulet börjar pipa). Hård belastning = ${sf.hard_load_a} A (acceleration, backe, gupp). Räknat på ${fmt(sf.v_rest,1,'V')} utan last (≈ ${fmt(sf.soc_pct,0,'%')} laddning), ${sf.rp_mohm} mΩ spänningsfall; källa: ${sf.source}; samband: ${sf.model}.`}
+  else $('safenote').textContent=sf.reason?'Säker fart: '+sf.reason:'';
   if(!alarmCfgShown||!$('alarmcfg').contains(document.activeElement)){alarmCfgShown=true;
     $('alarmcfg').innerHTML=Object.entries(ALBL).map(([k,l])=>`<tr><td>${l}</td><td><input id="al_${k}" value="${a.config[k]??''}" style="width:80px"></td></tr>`).join('')
       +'<tr><td></td><td><button class="btn go" onclick="alarmSave()">Spara</button></td></tr>'}}catch(e){}}
@@ -783,6 +789,9 @@ const TIPS={
 'Hjulet snurrar fortare':'Tid då hjulet gick klart fortare än GPS-farten: lyft hjul, halka eller slirning.',
 'Bärs / står still':'Tid då GPS:en rörde sig men hjulet stod still: hjulet bars eller åkte i bil.',
 'Kontrollerad andel':'Andel av punkterna där både hjulfart och bra GPS fanns, så att farten kunde kontrolleras.',
+'Säker fart nu – jämn fart':'Farten där 20 % marginal återstår om du håller jämn fart på plan mark, vid batteriets nuvarande spänning. Sjunker ungefär 1 km/h per 10 % laddning.',
+'Säker fart nu – hård belastning':'Samma gräns om du samtidigt drar 40 A: acceleration, uppförsbacke eller ett gupp i fart. Det är den här siffran som ger utrymme för det oväntade.',
+'Motorn tar slut vid':'Farten där PWM når 100 % under hård belastning. Där finns ingen kraft kvar att hålla dig upprätt. Beräknad, inte uppmätt.',
 'Säkerhetsmarginal':'100 minus PWM. Det som finns kvar av motorns kraft för att hålla dig upprätt. Under 20 % är det nära en avkastning.',
 'PWM nu':'Hur stor del av motorns tillgängliga spänning som används just nu.',
 'PWM om 3 s (prognos)':'Var PWM hamnar om tre sekunder om den fortsätter ändras i samma takt.',
