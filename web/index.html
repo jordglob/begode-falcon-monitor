@@ -32,6 +32,7 @@ section.overlay.open{display:block}
 .btn{padding:8px 14px;border:0;border-radius:8px;background:#2a2f3a;color:var(--fg);font-size:14px;margin:2px;cursor:pointer}
 .btn:disabled{opacity:.4;cursor:not-allowed}.btn.danger{background:#7a1f1a}.btn.go{background:#1d5e33}
 .ctlon{background:#3a1512 !important;outline:2px solid var(--bad)}
+.tipbox{display:none;position:fixed;z-index:9999;max-width:320px;padding:8px 10px;border-radius:8px;background:#262b36;color:var(--fg);border:1px solid #3a4150;font-size:13px;line-height:1.35;box-shadow:0 4px 14px rgba(0,0,0,.5);pointer-events:none}
 </style>
 </head>
 <body>
@@ -186,6 +187,7 @@ section.overlay.open{display:block}
 const $=id=>document.getElementById(id);
 const fmt=(v,d=1,u='')=>v==null||Number.isNaN(v)?'—':(typeof v==='number'?v.toFixed(d):v)+(u?' '+u:'');
 const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+const unsure=(html,on,why='för lite data')=>on?`<span style="color:var(--mut)">${html}</span> <span class="warn" style="font-size:12px">${why}</span>`:html;
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('act'));
   b.classList.add('act');$(b.dataset.t).classList.add('act');if(b.dataset.t==='pos'){gpstick();ridestick(true)}if(b.dataset.t==='graphs')graphtick(true);if(b.dataset.t==='health')chtick(true);
@@ -212,7 +214,8 @@ async function tick(){
       +kv('Laddnivå (gissad)',B.soc_guess_pct!=null?fmt(B.soc_guess_pct,0,'%')+(B.soc_guess_valid?'':' <span class="warn" style="font-size:12px">under last</span>'):'—')
       +kv('Temp min / max (8 givare)',`${fmt(B.temps_c[0],0)} / ${fmt(B.temps_c[1],0)} °C`)
       +kv('Cell min–max',B.cell_min_mv!=null?`${(B.cell_min_mv/1000).toFixed(3)}–${(B.cell_max_mv/1000).toFixed(3)}`:'—')
-      +kv('Spridning',B.cell_spread_mv!=null?`<span class="${B.cell_spread_mv<=20?'ok':B.cell_spread_mv<=50?'warn':'bad'}">${B.cell_spread_mv} mV</span>`:'—');
+      +kv('Spridning',B.cell_spread_mv!=null?`<span class="${B.cell_spread_mv<=20?'ok':B.cell_spread_mv<=50?'warn':'bad'}">${B.cell_spread_mv} mV</span>`:'—')
+      +kv('Spridning hela batteriet',B.cell_spread_pack_mv==null?'—':B.cell_spread_pack_valid?`<span class="${B.cell_spread_pack_mv<=20?'ok':B.cell_spread_pack_mv<=50?'warn':'bad'}">${B.cell_spread_pack_mv} mV</span>`:`<span style="font-size:14px;color:var(--mut)">bara i vila</span>`);
     $('strings').innerHTML=Object.entries(B.strings).map(([n,st])=>`<div class="note">Sträng ${n}: ${st.count} celler, summa ${st.sum_v} V, spridning ${st.spread_mv} mV</div>
       <div class="cells">${st.cells_mv.map((mv,i)=>`<div class="cell ${mv===B.cell_min_mv?'lo':''} ${mv===B.cell_max_mv?'hi':''}" title="cell ${i+1}">${(mv/1000).toFixed(3)}</div>`).join('')}</div>`).join('');
     $('groups').innerHTML='<tr><td>BMS</td><td>Läge</td><td>Ström</td><td>Halvor</td><td>Temp (4)</td><td>Skydd</td><td>MOS ❓</td><td>Balans</td></tr>'
@@ -263,7 +266,7 @@ async function healthtick(){try{const h=await fetch('/api/health').then(r=>r.jso
   $('hpts').innerHTML='<tr><td>Tid</td><td>Mätare</td><td>Kapacitet</td><td>ΔSoC</td><td>Metod</td></tr>'+C.points.slice().reverse().map(p=>
     `<tr><td>${dt(p.ts)}</td><td>${fmt(p.odometer_km,0,'km')}</td><td>${fmt(p.wh,0,'Wh')} (${fmt(p.ah,1,'Ah')})</td><td>${fmt(p.d_soc*100,0,'%')}</td><td>${KIND[p.method]||p.method}</td></tr>`).join('');
   $('hsess').innerHTML='<tr><td>Start</td><td>Typ</td><td>SoC</td><td>Ah</td><td>km</td><td>Max A</td><td>Avbrott</td></tr>'+h.sessions.map(x=>
-    `<tr><td>${dt(x.start_ts)}</td><td>${KIND[x.kind]||x.kind}</td><td>${fmt(x.soc_start,0)}→${fmt(x.soc_end,0)} %</td><td>${fmt(x.ah,1)}</td><td>${fmt(x.km,1)}</td><td>${fmt(x.max_a,1)}</td><td>${x.interruptions?'<span class="warn">'+x.interruptions+'</span>':'0'}</td></tr>`).join('')
+    `<tr><td>${dt(x.start_ts)}</td><td>${KIND[x.kind]||x.kind}</td><td>${fmt(x.soc_start,0)}→${fmt(x.soc_end,0)} %</td><td>${x.pre_fix?`<span style="color:var(--mut)" title="Mätt med BMS-fältet som inte följer lasten – före korrigering">${fmt(x.ah,1)} ⚠</span>`:fmt(x.ah,1)}</td><td>${fmt(x.km,1)}</td><td>${fmt(x.max_a,1)}</td><td>${x.interruptions?'<span class="warn">'+x.interruptions+'</span>':'0'}</td></tr>`).join('')
     +(h.pending?`<tr><td colspan="7" class="note">Väntar på vilospänning för att avsluta: ${KIND[h.pending]||h.pending}</td></tr>`:'');
   const ir=Object.entries(h.cell_ir_mohm);
   $('hir').innerHTML=ir.length?`<div class="cells">${ir.sort((a,b)=>a[0].localeCompare(b[0],'sv',{numeric:true})).map(([c,v])=>`<div class="cell ${h.cell_ir_flag.includes(c)?'lo':''}" title="${c}">${c}<br>${v.toFixed(1)}</div>`).join('')}</div>`
@@ -438,6 +441,7 @@ async function renderMax(id){try{const m=await fetch(`/api/rides/${id}/max`).the
   const A=m.alarms;
   $('maxalarms').innerHTML=A.count?`<b class="bad">⛔ ${A.count} larm under turen:</b> ${A.kinds.join(', ')}<table>${A.events.map(e=>`<tr style="cursor:pointer" onclick="gotoTs(${e.ts})"><td>${new Date(e.ts*1000).toLocaleTimeString('sv-SE')}</td><td>${e.key}</td><td>${e.old} → <b>${e.new}</b></td></tr>`).join('')}</table>`
     :'<span class="ok">✅ Inga larm loggade under turen.</span>';
+  if(A.pre_fix_count)$('maxalarms').innerHTML+=`<div style="color:var(--mut);font-size:13px;margin-top:6px">${A.pre_fix_count} äldre larm om "paket som inte bär ström" räknas inte: de byggde på ett mätfel (före korrigering).</div>`;
 }catch(e){}}
 function gotoTs(ts){markerAtTs(ts);profCursorAtTs(ts);const T=rideData&&rideData.track;if(!T)return;
   let best=T[0],bd=1e18;for(const p of T){const d=Math.abs(p[3]-ts);if(d<bd){bd=d;best=p}}LMAP.setView([best[0],best[1]],Math.max(LMAP.getZoom(),16))}
@@ -446,12 +450,14 @@ async function renderAnalysis(id){$('elevcard').style.display='block';$('elevsrc
   const a=await fetch(`/api/rides/${id}/analysis`).then(r=>r.json());rideAna=a;drawRide();
   if(!a.ok){$('elevsrc').textContent='Ingen höjdanalys: '+(a.reason||a.error);return}
   const t=a.totals,ph=a.physics,rg=a.regression;
+  const thin=t.energy_coverage_pct!=null&&t.energy_coverage_pct<50;   // too little wheel data for the energy figures
   $('elevsrc').innerHTML=a.source==='dem'?'Höjd: terrängmodell (bra)':'Höjd: GPS-höjd, utjämnad – <span class="warn">grov</span> (hämta terrängmodell under Inställningar)';
   $('elevtot').innerHTML=kv('Höjdmeter upp',fmt(t.ascent_m,0,'m'))+kv('Höjdmeter ned',fmt(t.descent_m,0,'m'))+kv('Högst / lägst',`${fmt(t.max_elev_m,0)} / ${fmt(t.min_elev_m,0)} m`)
-    +kv('Brantast upp / ned',`${fmt(t.steepest_up_pct,1)} / ${fmt(t.steepest_down_pct,1)} %`)+kv('Energi ut',fmt(t.wh_out,0,'Wh'))+kv('Återvunnet',fmt(t.wh_regen,0,'Wh'))
-    +kv('Netto per km',fmt(t.wh_per_km,1,'Wh/km'))+kv('Backarnas extra energi',fmt(t.extra_climb_wh,0,'Wh'))
-    +kv('Uppför: Wh per höjdmeter',rg?fmt(rg.up_wh_per_m,2):fmt(t.climb_wh_per_m,2))+kv('Nedför: sparat per höjdmeter',rg?fmt(rg.down_wh_per_m,2,'Wh'):fmt(t.regen_per_m,2,'Wh'))
-    +kv('Energidata täcker',fmt(t.energy_coverage_pct,0,'%'));
+    +kv('Brantast upp / ned',unsure(`${fmt(t.steepest_up_pct,1)} / ${fmt(t.steepest_down_pct,1)} %`,Math.max(Math.abs(t.steepest_up_pct||0),Math.abs(t.steepest_down_pct||0))>15,'höjdmodell?'))
+    +kv('Energi ut',unsure(fmt(t.wh_out,0,'Wh'),thin))+kv('Återvunnet',unsure(fmt(t.wh_regen,0,'Wh'),thin))
+    +kv('Netto per km',unsure(fmt(t.wh_per_km,1,'Wh/km'),thin))+kv('Backarnas extra energi',unsure(fmt(t.extra_climb_wh,0,'Wh'),thin))
+    +kv('Uppför: Wh per höjdmeter',unsure(rg?fmt(rg.up_wh_per_m,2):fmt(t.climb_wh_per_m,2),thin))+kv('Nedför: sparat per höjdmeter',unsure(rg?fmt(rg.down_wh_per_m,2,'Wh'):fmt(t.regen_per_m,2,'Wh'),thin))
+    +kv('Energidata täcker',`<span class="${thin?'warn':''}">${fmt(t.energy_coverage_pct,0,'%')}</span>`);
   const C=a.climbs;
   $('climbs').innerHTML=C.length?'<tr><td></td><td>Från–till</td><td>Höjd</td><td>Längd</td><td>Snitt / max</td><td>Energi netto</td><td>Wh/höjdm</td><td>Effekt</td><td>Minsta marginal</td></tr>'+C.map((c,i)=>`<tr style="cursor:pointer" onclick="zoomClimb(${i})">
     <td>${c.dir==='up'?'↗':'↘'}</td><td>${c.start_km.toFixed(2)}–${c.end_km.toFixed(2)} km</td><td>${c.dh_m>0?'+':''}${c.dh_m} m</td><td>${c.length_m.toFixed(0)} m</td>
@@ -535,7 +541,7 @@ function reltick(L){const p=L.paused_until;$('relbtns').innerHTML=p?`<span class
 const GDEF=[
   {k:'voltage_v',t:'Batterispänning',u:'V',c:['#3987e5']},
   {k:'current_a',t:'Batteriström',u:'A',c:['#3987e5']},
-  {k:'cell_spread_mv',t:'Cellspridning (max − min)',u:'mV',c:['#3987e5']},
+  {k:'cell_spread_mv',t:'Cellspridning (samtidigt mätta celler)',u:'mV',c:['#3987e5']},
   {k:['cell_min_mv','cell_max_mv'],n:['Lägsta cell','Högsta cell'],t:'Cellspänning min / max',u:'mV',c:['#3987e5','#d95926']},
   {k:['temp1_c','temp2_c','board_temp_c','motor_temp_c'],n:['Batteri (min)','Batteri (max)','Moderkort','Motor'],t:'Temperaturer',u:'°C',c:['#3987e5','#d95926','#199e70','#c98500']},
   {k:'sag_mohm',t:'Spänningsfall per ampere (gissat)',u:'mΩ',c:['#3987e5']},
@@ -672,6 +678,168 @@ tick();logtick();
   else if(h==='#prefs')togglePrefs(true);
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
 guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);livetick();setInterval(livetick,2000);setInterval(()=>{graphtick(false);chtick(false);ridestick(false)},10000);alarmtick();setInterval(alarmtick,1000);thermtick();setInterval(thermtick,2000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
+// ---------- hover explanations: shown after ~1 s on a value tile or a cell ----------
+const TIPS={
+'Fart':'Hjulets egen fart, från hjulets datapaket (inte GPS).',
+'Spänning':'Batteriets totala spänning enligt BMS. Sjunker under last och stiger igen i vila – jämför därför bara värden tagna i vila.',
+'Mätarställning':'Hjulets totala körsträcka sedan det var nytt, lagrad i hjulet.',
+'Tripp':'Sträcka sedan hjulet senast slogs på. Nollställs vid avstängning.',
+'Räckvidd? (rå, osäkert)':'Ett rått tal ur hjulets paket som Begode-appen verkar visa som räckvidd. Skalan är inte bekräftad – lita inte på det.',
+'Hjulets larm':'Larm som hjulet självt rapporterar just nu (t.ex. överspänning, hög temperatur). Tomt betyder att hjulet inte larmar.',
+'Tiltback-fart':'Farten där hjulet börjar luta pedalerna bakåt för att bromsa dig. Inställd i hjulet.',
+'Stämningsljus (LED-läge)':'Numret på valt ljusmönster för hjulets dekorlampor.',
+'Stänger av om':'Tid tills hjulet stänger av sig självt när det står oanvänt.',
+'Ljusläge':'Strålkastarens läge som ett nummer ur hjulets inställningar.',
+'Pedalläge (bitar)':'Råa inställningsbitar för pedalernas hårdhet. Tolkningen är inte säkerställd.',
+'Fartlarmläge':'Vilka av hjulets fartlarm (pip) som är påslagna, som ett nummer.',
+'Lutningsvinkel-läge':'Hjulets inställning för hur långt det får luta i sidled innan motorn slår av.',
+'PWM-gräns eller batterivarning':'Ett fält från BMS som antingen är en effektgräns eller en varningsnivå. Betydelsen är inte bekräftad.',
+'Ström':'Batteriström just nu, mätt av moderkortet. Plus = urladdning, minus = laddning eller återvinning vid inbromsning.',
+'Effekt':'Spänning × ström just nu. Negativt värde betyder att energi går tillbaka in i batteriet.',
+'Laddnivå (gissad)':'Laddnivå skattad ur cellspänningen. Stämmer bara i vila; under last visar den för lågt.',
+'Temp min / max (8 givare)':'Lägsta och högsta temperatur bland batteriets åtta temperaturgivare (fyra per paket).',
+'Cell min–max':'Lägsta och högsta cellspänning bland alla 48 celler just nu.',
+'Spridning':'Största skillnad mellan celler som mätts i samma ögonblick (inom ett halvpaket om 12 celler). Gäller även under körning. Stort värde = en cell avviker på riktigt.',
+'Spridning hela batteriet':'Skillnaden mellan högsta och lägsta av alla 48 celler. Halvpaketen mäts vid olika tidpunkter, så värdet visas bara när batteriet vilar.',
+'Busspänning':'Spänningen som moderkortet mäter, uppskalad till hela batteriet.',
+'Spänningsfall':'Hur många millivolt spänningen sjunker per ampere. Ett mått på batteriets inre motstånd – lägre är bättre.',
+'Hälsoindex (gissat)':'Jämför dagens spänningsfall med ett referensvärde. Kräver en referens från körning och är bara en grov skattning.',
+'Tomgångsspänning (skattad)':'Vad spänningen skulle vara utan last, framräknad ur spänning och ström.',
+'Referens-ESR':'Inmatat referensvärde för batteriets inre motstånd som hälsoindexet jämför mot.',
+'Moderkort':'Moderkortets temperatur.',
+'Motor':'Motorns temperatur enligt hjulet.',
+'Fasström (paket 0)':'Strömmen i motorns lindningar. Är inte samma sak som batteriström och kan vara mycket högre vid låg fart.',
+'Batteriström (paket 7)':'Moderkortets mätning av batteriströmmen. Det är den här strömmen appen räknar energi och effekt på.',
+'PWM':'Hur stor del av motorns tillgängliga spänning som används. Nära 100 % finns ingen kraft kvar att balansera med.',
+'Ansluten i':'Hur länge den nuvarande Bluetooth-anslutningen till hjulet har varat.',
+'Anslutningar':'Antal gånger appen anslutit till hjulet sedan appen startade. Många anslutningar = hackig länk.',
+'Andel tid med data':'Hur stor del av tiden appen faktiskt fått data från hjulet. Låg andel ger luckor i historik och turer.',
+'Senaste avbrott':'När Bluetooth-länken senast bröts.',
+'Hälsa':'Uppmätt kapacitet jämfört med den första mätningen. Kräver minst en urladdning över ett stort laddnivå-spann.',
+'Kapacitet nu':'Senast uppmätta energimängd som batteriet rymmer, uppräknad till 0–100 %.',
+'Referens (första mätning)':'Den första kapacitetsmätningen. Senare mätningar jämförs mot den.',
+'Nominell':'Batteriets kapacitet enligt tillverkaren (1800 Wh).',
+'80 % nås vid':'Skattad mätarställning där batteriet har 80 % av sin kapacitet kvar, om slitaget fortsätter i samma takt.',
+'Laddnivå i vila':'Laddnivå ur cellspänningen när batteriet vilat. Det mest pålitliga procentvärdet i appen.',
+'Ut':'Energi och laddning som tagits ur batteriet medan appen varit ansluten.',
+'In':'Energi och laddning som gått in i batteriet (laddning och återvinning) medan appen varit ansluten.',
+'Ekvivalenta cykler':'Uttagen energi delad med batteriets kapacitet. 1,0 = en hel urladdning sammanlagt.',
+'Observerad tid':'Sammanlagd tid som appen haft data från hjulet. Det som hänt utan anslutning räknas inte.',
+'Läge nu':'Om batteriet just nu vilar, laddas ur eller laddas.',
+'Ström nu':'Batteriström just nu, mätt av moderkortet.',
+'Hjulets %':'Laddnivån så som hjulet självt räknar den, ur spänningen.',
+'Vår % (vila)':'Appens egen laddnivå ur cellspänning i vila.',
+'Skillnad':'Hjulets procent minus appens. Stor skillnad betyder att hjulets visning är missvisande.',
+'Hjulets räckvidd (rå)':'Hjulets eget räckviddstal, obearbetat. Skalan är osäker.',
+'Vår räckvidd':'Återstående energi delad med din uppmätta förbrukning.',
+'Förbrukning':'Nettoenergi per kilometer (uttaget minus återvunnet). Bygger bara på sträckor där appen hade data från hjulet.',
+'Ström (moderkort)':'Batteriström från moderkortet, den snabba mätningen som används för cellernas inre motstånd.',
+'Appen':'Appens version.',
+'Bluetooth-modul':'Firmware och hårdvara i hjulets Bluetooth-modul.',
+'Hjulets firmware':'Versionen av hjulets styrprogram.',
+'Status':'GPS-mottagarens läge: söker satelliter, har position eller är avstängd.',
+'Position':'Senaste GPS-position. Länken öppnar platsen på en karta.',
+'Noggrannhet (grov)':'Ungefärligt fel i positionen, skattat ur satelliternas geometri. Ingen exakt mätning.',
+'Satelliter använda / synliga':'Hur många satelliter som används för positionen, och hur många mottagaren ser. Under 5 använda ger opålitlig fart.',
+'HDOP / PDOP':'Mått på satelliternas geometri. Under 2 är bra; över 2,5 litar appen inte på GPS-farten.',
+'Fart (GPS)':'Fart enligt GPS. Kan hoppa flera km/h vid dålig mottagning, t.ex. mellan höga hus.',
+'Kurs':'Färdriktning i grader, där 0 är norr.',
+'Höjd':'Höjd över havet enligt GPS. Ofta tiotals meter fel.',
+'Tid (UTC)':'GPS-mottagarens klocka.',
+'Hjulets fart / GPS':'Hjulets egen fart jämförd med GPS-farten i samma ögonblick.',
+'Fartrimlighet':'Om hjul och GPS är överens. "Snurrar" = hjulet går fortare än du rör dig; "bärs" = du rör dig men hjulet står still.',
+'Tid till första position':'Hur lång tid GPS:en behövde för sin första position efter start.',
+'Andel med position':'Andel av avläsningarna där GPS:en hade en giltig position.',
+'Avläsningar':'Antal gånger appen frågat GPS:en sedan start.',
+'Sparade punkter':'Antal GPS-punkter i databasen. Turerna byggs av dessa – utan punkter blir det ingen tur.',
+'Igång':'Hur länge GPS-läsningen har varit igång.',
+'Höjdmeter upp':'Sammanlagd stigning under turen, ur höjdmodell. På broar läser modellen marken eller vattnet under bron, vilket ger för höga tal.',
+'Höjdmeter ned':'Sammanlagt fall under turen, ur höjdmodell. Samma felkälla på broar som för stigning.',
+'Högst / lägst':'Högsta och lägsta höjd över havet längs turen.',
+'Brantast upp / ned':'Brantaste lutning på en kort sträcka. Värden över ca 15 % beror oftast på fel i höjdmodellen, t.ex. vid broar.',
+'Energi ut':'Energi som tagits ur batteriet under turen. Räknas bara där appen hade data från hjulet.',
+'Återvunnet':'Energi som gått tillbaka till batteriet vid inbromsning och nedför.',
+'Netto per km':'Uttagen minus återvunnen energi per kilometer.',
+'Backarnas extra energi':'Skattad extra energi som stigningarna kostade jämfört med plan mark.',
+'Uppför: Wh per höjdmeter':'Extra energi per stigen höjdmeter. Teoretiskt ca 0,3 Wh/m för dig och hjulet; avviker värdet mycket är underlaget för tunt.',
+'Nedför: sparat per höjdmeter':'Hur mycket energi varje höjdmeter nedför ger tillbaka.',
+'Energidata täcker':'Andel av turen där appen hade energidata från hjulet. Under ca 50 % är energisiffrorna för turen osäkra.',
+'Sträcka':'Turens längd, summerad mellan GPS-punkterna.',
+'Tid i rörelse':'Tid då farten var över 3 km/h.',
+'Total tid':'Tid från turens första till sista punkt, inklusive stopp.',
+'Maxfart':'Högsta fart under turen. Hjulets fart används när den finns, annars GPS – kolla "Kontrollerad andel" innan du litar på toppvärdet.',
+'Snittfart i rörelse':'Sträcka delad med tid i rörelse.',
+'Punkter':'Antal GPS-punkter i turen.',
+'Hjulet snurrar fortare':'Tid då hjulet gick klart fortare än GPS-farten: lyft hjul, halka eller slirning.',
+'Bärs / står still':'Tid då GPS:en rörde sig men hjulet stod still: hjulet bars eller åkte i bil.',
+'Kontrollerad andel':'Andel av punkterna där både hjulfart och bra GPS fanns, så att farten kunde kontrolleras.',
+'Säkerhetsmarginal':'100 minus PWM. Det som finns kvar av motorns kraft för att hålla dig upprätt. Under 20 % är det nära en avkastning.',
+'PWM nu':'Hur stor del av motorns tillgängliga spänning som används just nu.',
+'PWM om 3 s (prognos)':'Var PWM hamnar om tre sekunder om den fortsätter ändras i samma takt.',
+'Laddningsgräns':'Om appen ska bryta laddningen via ett smart uttag när cellerna nått gränsen.',
+'Gräns':'Medelcellspänningen där laddningen bryts.',
+'Medelcell nu':'Medelvärdet av alla cellers spänning just nu.',
+'Laddar':'Ja när en BMS rapporterar laddning och strömmen går in i batteriet.',
+'Kontakt':'Det smarta uttagets läge, om ett är inställt.',
+'Senaste stopp':'När appen senast bröt laddningen och vid vilken cellspänning.',
+'Fart nu':'Hjulets fart just nu.',
+'Effekt nu':'Batteriets effekt just nu (spänning × ström).',
+'Larm under turen':'Antal larm som appen gett under den pågående turen.',
+'Tid':'Tid sedan turen började.',
+'Höjdmeter ↑ / ↓':'Stigning och fall hittills under turen, ur höjdmodell.',
+'Energi ut / återvunnet':'Uttagen och återvunnen energi hittills under turen.',
+'Batteritemperatur':'Batteriets temperatur. Kallt batteri har högre inre motstånd och ger mindre effekt; laddning bör ske mellan 5 och 45 °C.',
+'Max effekt nu':'Skattad högsta effekt innan den svagaste cellen sjunker till 3,2 V vid nuvarande temperatur och laddnivå.',
+'Rekommenderat max':'70 % av max effekt – en marginal att hålla sig under.',
+'Max vid 25 °C':'Vad max effekt skulle vara om batteriet höll 25 °C.',
+'Begränsas av':'Vad som just nu sätter gränsen för uttagbar effekt.',
+'Uppvärmd (15 °C) om':'Skattad tid tills batteriet värmts till 15 °C av körningen.',
+'Kurva':'Om sambandet mellan temperatur och inre motstånd är inlärt från ditt batteri eller ett standardantagande.',
+'Mätpunkter':'Antal mätningar som temperaturkurvan bygger på.',
+'Motstånd nu (svagaste cell)':'Inre motstånd hos cellen med högst motstånd, vid nuvarande temperatur.',
+'Räknat till 25 °C':'Samma motstånd omräknat till 25 °C, så att värden från olika dagar kan jämföras.',
+'Lägsta säkerhetsmarginal':'Turens lägsta marginal (100 minus PWM). Klicka för att se var på kartan.',
+'Högsta ström':'Högsta batteriström under turen, där appen hade data.',
+'Högsta effekt':'Högsta uttagna effekt under turen, där appen hade data.',
+'Högsta återvinning':'Högsta effekt tillbaka in i batteriet vid inbromsning eller nedför.',
+'Lägsta spänning under last':'Lägsta batterispänning under turen. Djupa dippar vid måttlig ström tyder på högt inre motstånd.',
+'Lägsta cellspänning':'Lägsta enskilda cell under turen. Under 3,2 V under last är för lågt.',
+'Största cellspridning':'Största skillnad under turen mellan celler mätta i samma ögonblick. Turer före version 0.23 räknade över hela batteriet och visar för höga värden.',
+'Högsta motortemperatur':'Motorns högsta temperatur under turen.',
+'Högsta moderkortstemperatur':'Moderkortets högsta temperatur under turen.',
+'Brantaste uppför':'Brantaste stigning enligt höjdmodellen. Opålitligt vid broar.',
+'Brantaste nedför':'Brantaste utförslut enligt höjdmodellen. Opålitligt vid broar.',
+'Högsta punkt':'Turens högsta höjd över havet enligt höjdmodellen.',
+};
+const CELL_TIPS={
+cfast:'Cellens senaste spänning, hur gammalt värdet är och dess inre motstånd (mΩ), framräknat ur hur spänningen följer strömmen. Röd = avviker från de andra.',
+hir:'Cellens inre motstånd i milliohm. Lägre är bättre; en cell som ligger klart över de andra är svagast och sjunker mest under last.',
+'':'En cells spänning i volt. Markerade celler är lägst respektive högst just nu. Cell 1–12 och 13–24 i varje sträng mäts vid olika tidpunkter, så jämför bara inom samma halva under körning.'};
+(function(){
+  const box=document.createElement('div');box.className='tipbox';document.body.appendChild(box);
+  let key=null,timer=null,x=0,y=0;
+  const norm=s=>s.replace(/❓/g,'').replace(/\s+/g,' ').trim();
+  const lookup=el=>{
+    const kvEl=el.closest('.kv');
+    if(kvEl){const k=kvEl.querySelector('.k');if(!k)return null;const l=norm(k.textContent);
+      return TIPS[l]||TIPS[norm(l.replace(/\s*\([^)]*\)\s*$/,''))]||null}
+    const c=el.closest('.cell');
+    if(c){const host=c.closest('#cfast,#hir');return CELL_TIPS[host?host.id:'']}
+    return null};
+  const hide=()=>{clearTimeout(timer);timer=null;key=null;box.style.display='none'};
+  const show=text=>{box.textContent=text;box.style.display='block';
+    const w=box.offsetWidth,h=box.offsetHeight;
+    box.style.left=Math.max(8,Math.min(x+14,innerWidth-w-8))+'px';
+    box.style.top=(y+18+h>innerHeight?Math.max(8,y-h-12):y+18)+'px'};
+  // tiles are redrawn every second, so follow the pointer and the explanation text, not the element
+  document.addEventListener('mousemove',e=>{x=e.clientX;y=e.clientY;
+    const text=e.target.closest?lookup(e.target):null;
+    if(text===key)return;
+    hide();if(!text)return;
+    key=text;timer=setTimeout(()=>show(text),1000)});
+  document.addEventListener('mouseleave',hide);
+  addEventListener('scroll',hide,true);addEventListener('mousedown',hide,true);
+})();
 </script>
 </body>
 </html>

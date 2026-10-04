@@ -306,13 +306,21 @@ class WheelState:
             }
         return out
 
+    def bms_charging(self) -> bool:
+        return any(x["activity"] == "laddning" for x in self.bms().values())
+
     def battery_current(self) -> float | None:
-        """Pack current: BMS 1 + BMS 2 (+ = discharge). Falls back to p7."""
+        """Pack current (+ = discharge): the controller's measurement (p7).
+
+        The BMS rows' current field does not follow the load: on the 2026-10-03 ride it had
+        ~0 correlation with p7 and read 0.0-0.2 A while the controller drew 15-25 A. It is
+        kept only while a BMS reports charging (not yet checked against p7) or without p7."""
         b = self.bms()
-        if b:
-            i = sum(abs(x["current_a"]) for x in b.values())
-            return -i if any(x["activity"] == "laddning" for x in b.values()) else i
-        return self.p7.get("battery_current_a")
+        bms_sum = sum(abs(x["current_a"]) for x in b.values()) if b else None
+        if bms_sum is not None and self.bms_charging():
+            return -bms_sum
+        i = self.p7.get("battery_current_a")
+        return i if i is not None else bms_sum
 
     def cell_summary(self) -> dict:
         out = {}

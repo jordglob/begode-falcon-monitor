@@ -80,3 +80,12 @@ def test_ride_name_and_slug():
     assert name == "Tur 3 okt 2026 kl. 14:39" and slug == "2026-10-03-1439"
     s = rides.summary(rides.segment(pts(ts, 60))[0])
     assert s["name"] == name and s["slug"] == slug
+
+
+def test_max_speed_ignores_gps_speed_from_a_poor_fix():
+    from falcon.rides import trusted_speed
+    good = {"speed_kmh": 36.0, "sats": 7, "hdop": 1.4, "wheel_speed_kmh": None}
+    poor = {"speed_kmh": 44.7, "sats": 4, "hdop": 7.56, "wheel_speed_kmh": None}
+    old = {"speed_kmh": 30.0}                              # stored before sats/HDOP were kept
+    wheel = {"speed_kmh": 44.7, "sats": 4, "hdop": 7.56, "wheel_speed_kmh": 39.0}
+    assert [trusted_speed(p) for p in (good, poor, old, wheel)] == [36.0, None, 30.0, 39.0]

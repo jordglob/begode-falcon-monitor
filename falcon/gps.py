@@ -18,6 +18,7 @@ from collections import deque
 
 ROLLOVER = dt.timedelta(weeks=1024)
 KNOT_KMH = 1.852
+ENABLE_RETRY_S = 30          # how often to try switching the modem's GPS back on
 
 
 def nmea_ok(line: str) -> bool:
@@ -140,6 +141,7 @@ class GpsReader:
         self.last_ts: float | None = None
         self.track: deque = deque(maxlen=2000)     # recent fixes (ts, lat, lon, speed)
         self.on_fix = None                          # callback(dict) for storage
+        self._last_enable, self.enable_tries, self.enable_error = 0.0, 0, None
 
     async def _get(self) -> str:
         p = await asyncio.create_subprocess_exec(
@@ -147,6 +149,19 @@ class GpsReader:
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
         out, _ = await asyncio.wait_for(p.communicate(), 10)
         return out.decode(errors="replace")
+
+    async def _enable(self) -> None:
+        """The modem forgets its GPS setting on every suspend and reboot (and may come back
+        under a new index), so switch NMEA output on again instead of waiting for a human."""
+        self.modem = find_mm_modem()
+        if self.modem is None:
+            return
+        p = await asyncio.create_subprocess_exec(
+            "mmcli", "-m", self.modem, "--location-enable-gps-nmea",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        _, err = await asyncio.wait_for(p.communicate(), 20)
+        self.enable_tries += 1
+        self.enable_error = err.decode(errors="replace").strip()[-200:] if p.returncode else None
 
     async def run(self) -> None:
         while True:
@@ -163,7 +178,12 @@ class GpsReader:
                 self.polls += 1
                 self.last_ts = time.time()
                 if "$G" not in text:
-                    self.status = "GPS avstängd i modemet (mmcli --location-enable-gps-nmea)"
+                    self.status = "GPS avstängd i modemet – slår på"
+                    if time.time() - self._last_enable >= ENABLE_RETRY_S:
+                        self._last_enable = time.time()
+                        await self._enable()
+                    if self.enable_error:
+                        self.status = f"GPS avstängd i modemet, kunde inte slå på: {self.enable_error}"
                 elif self.nmea.has_fix:
                     self.fix_polls += 1
                     self.status = "position"

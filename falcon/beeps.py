@@ -19,6 +19,8 @@ import time
 from collections import deque
 from pathlib import Path
 
+from . import guard
+
 # packet 4, frame byte 14 – two interpretations exist; the official app's is newer
 ALERT_BITS = [
     (0x01, "strömfel / hög effekt", "hög effekt (80 %-larm)", "alarm"),
@@ -117,7 +119,7 @@ class BeepWatch:
                 "under 3,3 V" if lo < 3300 else "normal"
             w["lägsta cell"] = (band, "alarm", "lägsta cellspänning")
         bms = snap.get("bms") or {}
-        if len(bms) == 2 and battery_current is not None and abs(battery_current) > 5:
+        if guard.SHUNT_CHECKS and len(bms) == 2 and battery_current is not None and abs(battery_current) > 5:
             cur = {k: abs(b.get("current_a") or 0) for k, b in bms.items()}
             drop = [k for k, v in cur.items() if v < 0.1 * max(cur.values())]
             w["paket som inte bär ström"] = (f"BMS {drop[0]}" if drop else None, "alarm",

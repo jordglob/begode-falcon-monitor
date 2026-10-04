@@ -34,7 +34,8 @@ INTERRUPT_MAX_S = 120   # charge current gone and back within this = cable/charg
 OFF_GAP_MIN_S = 6 * 3600
 MIN_DSOC = 0.20         # capacity point only for ≥20 % SoC change
 STEP_A = 3.0            # current step for per-cell resistance
-STEP_SETTLE_S = 3.0
+STEP_SETTLE_S = 8.0     # the BMS repeats old cell values for seconds; wait until they are from after the step
+STEP_FLAT_A = 1.5       # current must be this flat before and after the step (charger on/off, not riding)
 MAX_DT = 5.0            # longer gaps between ticks are not integrated
 
 WHEEL_PCT_LO, WHEEL_PCT_HI = 4800, 6550   # official app: p0 voltage → %
@@ -155,7 +156,7 @@ class Health:
             return
         groups = list(snap["groups"].values())
         bms = list((snap.get("bms") or {}).values())
-        current = snap.get("battery_current_a") or 0.0   # BMS 1 + BMS 2, + = discharge
+        current = snap.get("battery_current_a") or 0.0   # controller (p7), + = discharge
         volt = groups[0].get("voltage_v") or 0.0
         temp = max((b["temp_max_c"] for b in bms if b.get("temp_max_c") is not None), default=None)
         cells = _cells(snap)
@@ -316,7 +317,13 @@ class Health:
         self.db.commit()          # never keep a write transaction open between ticks
 
     # ---------- per-cell resistance from current steps ----------
+    def _flat(self, t0, t1) -> bool:
+        vals = [h[1] for h in self.hist if t0 <= h[0] <= t1]
+        return len(vals) >= 2 and max(vals) - min(vals) <= STEP_FLAT_A
+
     def _resistance(self, ts, current, cells):
+        """One clean current step between two flat levels (charger on/off). While riding the
+        current never holds still long enough for the cell values to belong to it."""
         self.hist.append((ts, current, cells))
         if self.step_wait:
             t_step, before = self.step_wait
@@ -324,16 +331,16 @@ class Health:
                 self.step_wait = None
                 b_ts, b_i, b_cells = before
                 d_i = (current - b_i) / 2.0            # two strings in parallel
-                if abs(d_i) * 2 >= STEP_A:
+                if abs(d_i) * 2 >= STEP_A and self._flat(t_step, ts):
                     for c, mv in cells.items():
                         if c in b_cells:
                             r = (b_cells[c] - mv) / d_i      # mV/A = mΩ
                             if 0 < r < 200:
                                 self.db.execute("INSERT INTO cell_ir VALUES (?,?,?)", (ts, c, r))
             return
-        old = [h for h in self.hist if ts - h[0] >= STEP_SETTLE_S]
-        if old and abs(current - old[-1][1]) >= STEP_A:
-            self.step_wait = (ts, old[-1])
+        prev = [h for h in self.hist if h[0] < ts]
+        if prev and abs(current - prev[-1][1]) >= STEP_A and self._flat(prev[-1][0] - STEP_SETTLE_S, prev[-1][0]):
+            self.step_wait = (ts, prev[-1])
 
     # ---------- report ----------
     def report(self) -> dict:

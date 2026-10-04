@@ -55,6 +55,23 @@ def _speed(row: dict) -> float | None:
     return w
 
 
+def good_fix(p: dict) -> bool:
+    return (p.get("sats") or 0) >= GOOD_SATS and (p.get("hdop") or 99) <= GOOD_HDOP
+
+
+def trusted_speed(row: dict) -> float | None:
+    """Speed good enough for a record (max speed): the wheel's own speed, or GPS speed with a
+    good fix. GPS speed from a poor fix can jump many km/h (seen: 44.7 km/h on 4 satellites,
+    HDOP 7.6, while the wheel never passed 40) – fine for drawing the track, not for a maximum.
+    Points without sats/HDOP (older data) count as good."""
+    w = row.get("wheel_speed_kmh")
+    if w is not None and plausibility(row) != "spin":
+        return w
+    if row.get("sats") is None and row.get("hdop") is None:
+        return row.get("speed_kmh")
+    return row.get("speed_kmh") if good_fix(row) else None
+
+
 def segment(points: list[dict]) -> list[list[dict]]:
     """points sorted by ts, each with ts/lat/lon/speed_kmh/wheel_speed_kmh."""
     rides, cur, last_move = [], [], None
@@ -96,7 +113,7 @@ def ride_name(ts: float) -> tuple[str, str]:
 
 def summary(r: list[dict]) -> dict:
     dist = sum(haversine_m(a["lat"], a["lon"], b["lat"], b["lon"]) for a, b in zip(r, r[1:]))
-    speeds = [s for s in (_speed(p) for p in r) if s is not None]
+    speeds = [s for s in (trusted_speed(p) for p in r) if s is not None]
     moving_s = sum(b["ts"] - a["ts"] for a, b in zip(r, r[1:]) if (_speed(b) or 0) >= MOVING_KMH)
     dur = r[-1]["ts"] - r[0]["ts"]
     name, slug = ride_name(r[0]["ts"])

@@ -51,7 +51,7 @@ def test_battery_groups(replay):
     assert b[1]["voltage_v"] == 97.2 and b[1]["protection"] == ["normal", "normal"]
     assert b[1]["half_voltages_v"] == [49.4, 49.3]          # half-pack voltages
     assert len(b[1]["temps_c"]) == 4 and b[1]["temp_max_c"] == 36
-    assert st.battery_current() == pytest.approx(0.1)        # BMS 1 0.0 + BMS 2 0.1
+    assert st.battery_current() == pytest.approx(-0.78)      # controller (p7), not BMS 1 0.0 + BMS 2 0.1
 
 
 def test_packet0_and_7_currents(replay):

@@ -46,7 +46,8 @@ def test_alert_bit_logged_with_both_meanings_and_blackbox(tmp_path):
     assert d["events"] and min(f["t"] for f in d["frames"]) <= -25
 
 
-def test_pack_without_current_and_low_cell(tmp_path):
+def test_pack_without_current_and_low_cell(tmp_path, monkeypatch):
+    monkeypatch.setattr("falcon.guard.SHUNT_CHECKS", True)
     w = BeepWatch(tmp_path)
     s = base()
     w.check(0, s, 0.1)

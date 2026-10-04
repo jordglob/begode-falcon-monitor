@@ -2,6 +2,45 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.23.0 – 2026-10-04
+- **Cell voltages are only compared when they were measured at the same instant.** Each BMS
+  measures its 24 cells as two half-packs of 12 at different moments, frames are often repeats,
+  and nothing says when a value was taken (`falcon/sampling.py`). Under changing load this looked
+  like 200 mV cell faults. Now:
+  - spread and weak-cell checks under load work inside a half-pack, on new measurements, at a
+    current that has been steady for 4 s; the "bank" finding became a half-pack finding;
+  - whole-pack checks (cell, bank, string) wait until the pack has rested 8 s without a data gap;
+  - the lowest-cell alarm (3.2 V) still reacts to any new reading;
+  - cell resistance (regression, per-temperature history, step method) is learned only from
+    such samples – learned values from before were discarded once (database backed up first).
+  Replaying the 2026-10-03 recordings: 1668 cell findings before, 0 after; a truly weak cell
+  inserted into the same recording is still found (`tests/fixtures/ride_artifacts.txt`,
+  `python -m tools.replay_blackbox`).
+- "Spridning" now shows the spread between cells measured together; the whole-pack spread is a
+  separate value shown only at rest.
+- Ride figures say when they cannot be trusted: max speed uses the wheel's speed or GPS with a
+  good fix only; energy figures are greyed below 50 % wheel-data coverage; grades above 15 % are
+  flagged as terrain-model errors.
+- Findings, alarms and Ah figures recorded before this version are kept but marked
+  ("före korrigering") and no longer counted in a ride's alarm total.
+
+## 0.22.0 – 2026-10-04
+- **The BMS rows' current field is not the pack current.** On a 20 km ride it had ~0 correlation
+  with the controller's current (packet 7), read 0.0–0.2 A while the controller drew 15–25 A, was
+  never negative and stayed frozen for seconds. So: pack current now comes from the controller
+  (the BMS sum is kept only while a BMS reports charging – not yet checked), and the three shunt
+  checks (ratio/step, sum, pack dropout) plus the matching beep watch are switched off
+  (`guard.SHUNT_CHECKS`). Earlier Ah figures in the health sessions were based on the wrong field.
+- "Charging" now needs a BMS to report charging – the controller's current is also negative on
+  regeneration and idle noise.
+- Fix: the history sampler had no error handling and died silently, leaving `samples` empty for a
+  whole ride. One bad sample is now logged ("Historik: fel …") and the loop continues.
+- Fix: the modem forgets its GPS setting on every suspend and reboot (and may come back under a
+  new index). The app now switches GPS back on by itself instead of logging nothing.
+- **Hover explanations**: resting the pointer on any value or cell for a second shows what the
+  number means and how far to trust it.
+- docs: proposals for the wheel's own firmware (`docs/forslag-hjulets-mjukvara.md`).
+
 ## 0.21.1 – 2026-10-03
 - Fix: tabs restored from the last visit (Grafer, Batterihälsa …) stayed empty – the restore ran
   before the rest of the page script was defined. It now runs afterwards, and the tab views

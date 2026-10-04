@@ -69,7 +69,8 @@ class ChargeController:
         cells = [v for s in (snap.get("cells") or {}).values() for v in s.get("cells_mv", [])]
         self.mean_cell_v = sum(cells) / len(cells) / 1000 if cells else None
         i = snap.get("battery_current_a")
-        self.charging = bool(fresh and i is not None and i < CHARGING_A)
+        bms_says = any(b.get("activity") == "laddning" for b in (snap.get("bms") or {}).values())
+        self.charging = bool(fresh and bms_says and i is not None and i < CHARGING_A)  # p7 < 0 on regen too
         if not (self.enabled and self.plug.configured and self.charging and self.mean_cell_v):
             self.above_since = None
             return

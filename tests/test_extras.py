@@ -13,7 +13,8 @@ from falcon.protocol import WheelState
 def snap(pwm=0, speed=0, mtemp=30, btemp=30, cells_v=4.0, i=0.0):
     mv = [round(cells_v * 1000)] * 24
     return {"p0": {"speed_kmh": speed, "board_temp_c": btemp}, "p7": {"pwm_pct": pwm, "motor_temp_c": mtemp},
-            "cells": {"A": {"cells_mv": mv}, "B": {"cells_mv": mv}}, "battery_current_a": i}
+            "cells": {"A": {"cells_mv": mv}, "B": {"cells_mv": mv}}, "battery_current_a": i,
+            "bms": {1: {"activity": "laddning" if i < 0 else "urladdning"}}}
 
 
 # ---------- alarms ----------
@@ -133,3 +134,34 @@ def test_release_keeps_link_down_then_resumes():
         t.cancel()
     asyncio.run(go())
     assert calls                                    # trying again after the release
+
+
+# ---------- old artifact findings are marked, not deleted ----------
+def test_old_artifact_events_are_marked_and_not_counted(tmp_path):
+    from falcon import tripmax
+    from falcon.store import Store
+    st = Store(tmp_path / "h.db")
+    st.add_guard_event("alarm", "shunt_step", "BMS 2", "x")
+    st.add_guard_event("alarm", "wheel_alert", "", "y")
+    import time
+    ev = {e["code"]: e["pre_fix"] for e in st.guard_events(10, fix_ts=time.time() + 10)}
+    assert ev == {"shunt_step": True, "wheel_alert": False}
+    assert not any(e["pre_fix"] for e in st.guard_events(10, fix_ts=None))
+    pts = [{"ts": 100.0, "lat": 1.0, "lon": 1.0, "speed_kmh": 10.0}]
+    beeps = [{"ts": 100.0, "level": "alarm", "key": "paket som inte bär ström", "old": None, "new": "BMS 1"},
+             {"ts": 100.0, "level": "alarm", "key": "lägsta cell", "old": "normal", "new": "under 3,0 V"}]
+    a = tripmax.compute(pts, [], None, beeps, fix_ts=200.0)["alarms"]
+    assert a["count"] == 1 and a["kinds"] == ["lägsta cell"] and a["pre_fix_count"] == 1
+    assert tripmax.compute(pts, [], None, beeps, fix_ts=50.0)["alarms"]["count"] == 2
+
+
+def test_step_resistance_ignores_riding(tmp_path):
+    """Current that never holds still (riding) must not produce cell resistances."""
+    from falcon.health import Health
+    from falcon.store import Store
+    db = Store(tmp_path / "h.db").db
+    h = Health(db, 1800)
+    cells = {f"A{i}": 4000 for i in range(1, 25)}
+    for t in range(60):
+        h._resistance(float(t), 5.0 + 20.0 * (t % 3), {k: v - 10 * (t % 3) for k, v in cells.items()})
+    assert db.execute("SELECT count(*) FROM cell_ir").fetchone()[0] == 0

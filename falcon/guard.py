@@ -7,7 +7,7 @@ current each (178 % heat) until they burned, one by one. Because the BMS assumes
 every further burned resistor is a STEP (x1.33 -> x2 -> x4). That is what the
 shunt checks look for, first.
 
-Checks, in priority order:
+Checks, in priority order (1-3 are switched off, see SHUNT_CHECKS):
   1. shunt ratio   - each BMS group's current vs the other groups (under load)
   2. shunt sum     - sum of BMS group currents vs the controller's total current
   3. pack dropout  - a group at ~0 A while the others carry the load
@@ -26,6 +26,12 @@ import statistics
 import time
 from dataclasses import dataclass, field
 
+from .sampling import CurrentTrace, NewFrames, REST_S, half_of, segments
+
+# Checks 1-3 compare the BMS rows' current field, which turned out not to follow the real
+# load (2026-10-03: ~0 correlation with the controller's p7 current, false alarms on both
+# strings). Off until that field is understood.
+SHUNT_CHECKS = False
 LOAD_A = 5.0           # controller current needed for current-sharing checks
 REST_A = 1.0           # below this, voltages are compared (no load sag)
 LEARN_SAMPLES = 120    # load samples needed before a learned baseline is trusted
@@ -43,72 +49,90 @@ BALANCE_WARN_S = 2 * 3600
 
 LEVELS = {"ok": 0, "info": 1, "warn": 2, "alarm": 3}
 
-# cell spread UNDER LOAD – measured inside one bank (8 cells sampled at the same instant;
-# different banks are up to 1.8 s apart and would mix different load moments)
+# cell spread UNDER LOAD – measured inside one half-pack (12 cells measured at one instant, see
+# sampling.py). The seam between cell 12 and 13 runs through bank 1, and banks arrive in
+# different frames, so anything wider than a half-pack mixes different load moments.
 LOAD_SPREAD_MIN_A = 5.0        # pack current needed
-LOAD_SPREAD_WARN_MV = 80       # absolute limits per bank
+LOAD_SPREAD_WARN_MV = 80       # absolute limits per half-pack part
 LOAD_SPREAD_ALARM_MV = 150
 LOAD_CELL_ALARM_MV = 3200      # a cell this low under load can collapse -> cut-out
 LOAD_LEARN = 60                # samples to learn the normal mV-per-A spread
 LOAD_EXCESS_WARN_MV = 40       # above the learned normal for the same current
 
 
-COMP_MAX_AGE_S = 3.0          # a cell value older than this is not used
+COMP_MAX_AGE_S = 6.0          # a cell value older than this is not used
 COMP_MIN_CELLS = 40           # of 48
-COMP_DI_SKIP_A = 10.0         # current changed more than this in the last 0.6 s -> skip sample
 COMP_CELL_WARN_MV, COMP_CELL_ALARM_MV = 40, 80
 COMP_BANK_WARN_MV = 30
 
 
+def _cell_name(string: str, no: int) -> str:
+    return f"sträng {string}, bank {(no - 1) // 8}, cell {(no - 1) % 8 + 1} (nr {no})"
+
+
 class LoadSpread:
-    """Within-bank cell spread under load; learns this pack's normal spread per ampere and
-    names the cell that sags most."""
+    """Cell spread under load, only between cells measured at the same instant and only from
+    new measurements taken at a steady current; learns this pack's normal spread per ampere
+    and names the cell that sags most."""
 
     def __init__(self, baseline_mv_per_a: float | None = None):
         self.recent: list[dict] = []
+        self.lows: list[dict] = []
         self.learn: list[float] = []
         self.baseline = baseline_mv_per_a
         self.worst_cells: dict[str, int] = {}
-        self.comp: dict[str, tuple] = {}            # "A13" -> (ts, compensated mV, raw mV, bank key)
-        self.currents: list[tuple[float, float]] = []
-
-    def _current_jump(self, ts: float, i: float) -> bool:
-        self.currents.append((ts, i))
-        self.currents = [c for c in self.currents if ts - c[0] <= 1.0]
-        old = [c[1] for c in self.currents if ts - c[0] >= 0.6]
-        return bool(old) and abs(i - old[-1]) > COMP_DI_SKIP_A
+        self.comp: dict[str, tuple] = {}            # "A13" -> (ts, compensated mV, raw mV, half key)
+        self.trace = CurrentTrace()
+        self.frames = NewFrames()
+        self.used = self.skipped = 0
 
     def add(self, ts: float, string: str, bank: int, cells_mv: list[int], pack_current: float | None,
             r_lookup=None) -> None:
         if pack_current is None:
             return
-        # whole-pack comparison: every cell referred to "no load" with its own resistance,
-        # so cells measured up to 1.8 s apart (different load) become comparable
-        if r_lookup is not None and abs(pack_current) >= LOAD_SPREAD_MIN_A and not self._current_jump(ts, pack_current):
+        self.trace.add(ts, pack_current)
+        new = self.frames.is_new((string, bank), cells_mv)
+        if not new or len(cells_mv) < 2:
+            return
+        parts = segments(bank, cells_mv)
+        # lowest cell: a real reading whenever it was taken, so no steadiness needed
+        if (self.trace.peak(ts) or 0.0) >= LOAD_SPREAD_MIN_A:
+            j = min(range(len(cells_mv)), key=lambda k: cells_mv[k])
+            self.lows.append({"ts": ts, "low_mv": cells_mv[j], "cell": _cell_name(string, bank * 8 + j + 1)})
+            self.lows = [r for r in self.lows if ts - r["ts"] <= 10]
+        i = self.trace.steady(ts)
+        if i is None or abs(i) < LOAD_SPREAD_MIN_A:
+            self.skipped += 1
+            return
+        self.used += 1
+        # whole-pack comparison: every cell referred to "no load" with its own resistance. Valid
+        # because the current was steady, so it does not matter when exactly the cell was measured
+        if r_lookup is not None:
             keys = [f"{string}{bank * 8 + j + 1}" for j in range(len(cells_mv))]
             rs = [r_lookup(k) for k in keys]
             known = sorted(r for r in rs if r)
             r_fill = known[len(known) // 2] if known else None
             if r_fill is not None:
-                i_string = pack_current / 2
-                for k, mv, r in zip(keys, cells_mv, rs):
-                    self.comp[k] = (ts, mv + (r or r_fill) * i_string, mv, f"{string}{bank}")
-        if abs(pack_current) < LOAD_SPREAD_MIN_A or len(cells_mv) < 2:
-            return
-        i_string = abs(pack_current) / 2
-        lo = min(range(len(cells_mv)), key=lambda j: cells_mv[j])
-        spread = max(cells_mv) - cells_mv[lo]
-        cell = f"sträng {string}, bank {bank}, cell {lo % 8 + 1} (nr {bank * 8 + lo + 1})"
-        rec = {"ts": ts, "spread_mv": spread, "i_string": i_string, "low_mv": cells_mv[lo], "cell": cell}
-        self.recent.append(rec)
+                for j, (k, mv, r) in enumerate(zip(keys, cells_mv, rs)):
+                    self.comp[k] = (ts, mv + (r or r_fill) * i / 2, mv,
+                                    f"{string}{half_of(bank * 8 + j + 1)}")
+        i_string = abs(i) / 2
+        for _half, first, seg in parts:
+            if len(seg) < 2:
+                continue
+            lo = min(range(len(seg)), key=lambda k: seg[k])
+            spread = max(seg) - seg[lo]
+            cell = _cell_name(string, first + lo)
+            self.recent.append({"ts": ts, "spread_mv": spread, "i_string": i_string, "low_mv": seg[lo],
+                                "cell": cell})
+            if self.baseline is None:
+                self.learn.append(spread / i_string)
+                if len(self.learn) >= LOAD_LEARN:
+                    self.learn.sort()
+                    self.baseline = self.learn[len(self.learn) // 2]
+            if spread > LOAD_SPREAD_WARN_MV / 2:
+                self.worst_cells[cell] = self.worst_cells.get(cell, 0) + 1
         self.recent = [r for r in self.recent if ts - r["ts"] <= 10]
-        if self.baseline is None:
-            self.learn.append(spread / i_string)
-            if len(self.learn) >= LOAD_LEARN:
-                self.learn.sort()
-                self.baseline = self.learn[len(self.learn) // 2]
-        if spread > LOAD_SPREAD_WARN_MV / 2:
-            self.worst_cells[cell] = self.worst_cells.get(cell, 0) + 1
 
     def comp_findings(self, now: float) -> list:
         fresh = {k: v for k, v in self.comp.items() if now - v[0] <= COMP_MAX_AGE_S}
@@ -122,33 +146,36 @@ class LoadSpread:
         name = f"sträng {low_k[0]}, cell {low_k[1:]}"
         if dev <= -COMP_CELL_WARN_MV:
             out.append(("alarm" if dev <= -COMP_CELL_ALARM_MV else "warn", "load_comp_cell", name,
-                        f"Under last, jämfört med alla {len(fresh)} celler (kompenserat för ström och "
+                        f"Under jämn last, jämfört med alla {len(fresh)} celler (kompenserat för ström och "
                         f"cellens motstånd): {name} ligger {-dev:.0f} mV under mitten – svag cell eller dålig "
                         f"förbindelse.", round(dev)))
-        banks: dict[str, list[float]] = {}
+        halves: dict[str, list[float]] = {}
         for v in fresh.values():
-            banks.setdefault(v[3], []).append(v[1])
-        for b, bv in banks.items():
-            bv.sort()
-            bdev = bv[len(bv) // 2] - med
-            if bdev <= -COMP_BANK_WARN_MV:
-                out.append(("warn", "load_comp_bank", f"sträng {b[0]}, bank {b[1:]}",
-                            f"Under last ligger hela sträng {b[0]} bank {b[1:]} {-bdev:.0f} mV under resten av "
-                            f"paketet (kompenserat) – syns inte inom banken.", round(bdev)))
+            halves.setdefault(v[3], []).append(v[1])
+        for h, hv in halves.items():
+            hv.sort()
+            hdev = hv[len(hv) // 2] - med
+            if hdev <= -COMP_BANK_WARN_MV:
+                rng = "1–12" if h[1:] == "1" else "13–24"
+                out.append(("warn", "load_comp_bank", f"sträng {h[0]}, cell {rng}",
+                            f"Under jämn last ligger hela sträng {h[0]} cell {rng} {-hdev:.0f} mV under resten "
+                            f"av paketet (kompenserat) – syns inte inom halvpaketet.", round(hdev)))
         return out
 
     def findings(self, now: float) -> list:
         comp = self.comp_findings(now)
+        out = []
+        lows = [r for r in self.lows if now - r["ts"] <= 10]
+        if lows:
+            low = min(lows, key=lambda r: r["low_mv"])
+            if low["low_mv"] <= LOAD_CELL_ALARM_MV:
+                out.append(("alarm", "load_cell_low", low["cell"],
+                            f"Under last: {low['cell']} föll till {low['low_mv'] / 1000:.2f} V – risk att "
+                            f"paketet stänger av. Sakta in.", low["low_mv"]))
         rec = [r for r in self.recent if now - r["ts"] <= 10]
         if not rec:
-            return comp
+            return out + comp
         w = max(rec, key=lambda r: r["spread_mv"])
-        low = min(rec, key=lambda r: r["low_mv"])
-        out = []
-        if low["low_mv"] <= LOAD_CELL_ALARM_MV:
-            out.append(("alarm", "load_cell_low", low["cell"],
-                        f"Under last: {low['cell']} föll till {low['low_mv'] / 1000:.2f} V – risk att paketet "
-                        f"stänger av. Sakta in.", low["low_mv"]))
         lvl = "alarm" if w["spread_mv"] >= LOAD_SPREAD_ALARM_MV else "warn" if w["spread_mv"] >= LOAD_SPREAD_WARN_MV else None
         if lvl is None and self.baseline is not None:
             expected = self.baseline * w["i_string"]
@@ -157,8 +184,8 @@ class LoadSpread:
         if lvl:
             norm = f", normalt ≈ {self.baseline * w['i_string']:.0f} mV vid samma ström" if self.baseline else ""
             out.append((lvl, "load_spread", w["cell"],
-                        f"Cellspridning under last {w['spread_mv']} mV vid {w['i_string'] * 2:.0f} A{norm} – "
-                        f"lägst: {w['cell']}.", w["spread_mv"]))
+                        f"Cellspridning under jämn last {w['spread_mv']} mV vid {w['i_string'] * 2:.0f} A{norm} "
+                        f"(celler mätta i samma ögonblick) – lägst: {w['cell']}.", w["spread_mv"]))
         return out + comp
 
 
@@ -230,9 +257,11 @@ class Guard:
         if bms and pack_i is not None:
             if abs(pack_i) >= LOAD_A and len(bms) >= 2:
                 self.load_samples += 1
-                out += self._shunt_checks(bms, p7_i)
+                if SHUNT_CHECKS:
+                    out += self._shunt_checks(bms, p7_i)
                 out += self._temp_checks(bms)
-            if abs(pack_i) < REST_A:
+            rest = self.load_spread.trace.rest_s(now)        # None = no packet-rate history (tests, start)
+            if abs(pack_i) < REST_A and (rest is None or rest >= REST_S):
                 out += self._voltage_checks(snap.get("cells") or {})
             out += self._balance_checks(bms, now)
         if not any(LEVELS[f.level] >= LEVELS["warn"] for f in out):

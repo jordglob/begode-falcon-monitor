@@ -27,6 +27,7 @@ from . import settings as settings_mod
 from . import rideanalysis
 from .elevation import Dem
 from .beeps import BeepWatch
+from .sampling import ARTIFACT_BEEP_KEYS, NewFrames, pre_fix
 from . import tripmax
 from .thermal import Thermal, RModel, charge_temp_ok, battery_temp
 from .cellhistory import CellHistory
@@ -57,6 +58,7 @@ state = WheelState()
 bus = BusTracker()
 energy = EnergyCounter()
 cellreg = CellRegression()
+_cell_frames = NewFrames()
 events: deque = deque(maxlen=200)
 subscribers: set = set()
 _last_group_ts = 0.0
@@ -87,17 +89,20 @@ def _on_frame(f) -> None:
         _publish({"bus": bus.on_p0(state.p0, state.p7, ts, store.baseline_sag_ohm())})
         v = bus.bus_v(state.p0)
         energy.add(ts, v, (state.p7 or {}).get("battery_current_a"), (state.p7 or {}).get("pwm_pct"))
+    elif f.type == 7:
+        guard.load_spread.trace.add(ts, bus.current(state.p7))
     elif f.type in (2, 3):
-        cellreg.on_bank(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()),
-                        bus.current(state.p7))
-        guard.load_spread.add(ts, "A" if f.type == 2 else "B", f.sub, list(f.u16()), state.battery_current(),
-                              r_lookup=cellreg.resistance)
-        i_now = bus.current(state.p7)
+        string, cells = "A" if f.type == 2 else "B", list(f.u16())
+        guard.load_spread.add(ts, string, f.sub, cells, state.battery_current(), r_lookup=cellreg.resistance)
+        # resistance is learned only from new measurements taken at a steady current: the frame
+        # does not say when the cells were measured, so any other pairing is with the wrong current
+        i_now = guard.load_spread.trace.steady(ts) if _cell_frames.is_new((string, f.sub), cells) else None
+        cellreg.on_bank(ts, string, f.sub, cells, i_now)
         t_now = battery_temp(state.snapshot()) if f.sub == 0 else _last_temp[0]
         _last_temp[0] = t_now
         if i_now is not None:
-            for j, mv in enumerate(f.u16()):
-                cellhist.add(ts, f"{'A' if f.type == 2 else 'B'}{f.sub * 8 + j + 1}", i_now / 2, mv, t_now)
+            for j, mv in enumerate(cells):
+                cellhist.add(ts, f"{string}{f.sub * 8 + j + 1}", i_now / 2, mv, t_now)
 
 
 link = WheelLink(ADDRESS, state, on_frame=_on_frame)
@@ -140,6 +145,12 @@ backups = Backups(Path(os.environ.get("FALCON_BACKUPS",
 guard = Guard(store.get_json("guard_baseline"))
 NOMINAL_WH = float(os.environ.get("FALCON_NOMINAL_WH", "1800"))  # Falcon Pro label: 1.8 kWh
 health = Health(store.db, NOMINAL_WH)
+# when the corrected measuring rules (sampling.py, pack current from the controller) started on
+# this installation: findings and Ah figures recorded before it are marked, not deleted
+FIX_TS = (store.get_json("measurement_fix_ts") or {}).get("ts")
+if FIX_TS is None:
+    FIX_TS = time.time()
+    store.set_json("measurement_fix_ts", {"ts": FIX_TS, "version": __version__})
 
 
 def log_event(msg: str) -> None:
@@ -160,7 +171,12 @@ async def sampler() -> None:
             log_event(f"Bluetooth: {link.status}")
             last_status = link.status
         if link.connected and state.groups:
-            store.add(energy_view(state.snapshot(), bus.sag.estimate(), link.info(), store.baseline_sag_ohm()), state.p0, state.p4)
+            try:
+                store.add(energy_view(state.snapshot(), bus.sag.estimate(), link.info(), store.baseline_sag_ohm()),
+                          state.p0 or {}, state.p4 or {})
+            except Exception as e:  # one bad sample must never stop the history
+                logging.getLogger("falcon.sampler").exception("sample not stored")
+                log_event(f"Historik: fel {e!r}")
 
 
 def _auto_backup() -> None:
@@ -206,7 +222,7 @@ def _thermal_tick(now: float) -> dict:
     v0, r_w, t_meas = _weakest_cell()
     p_now = energy_power_now()
     res = thermal.evaluate(snap, v0, r_w, t_meas, p_now, alarms.report().get("safety_margin_pct"), now)
-    charging = (state.battery_current() or 0) < -0.5
+    charging = state.bms_charging() and (state.battery_current() or 0) < -0.5
     ok, msg = charge_temp_ok(res.get("temp_c"))
     res["charge_temp_ok"], res["charge_note"] = ok, msg
     if charging and not ok and now - _last_charge_temp_note > 600:
@@ -347,12 +363,15 @@ async def api_stream():
 @app.get("/api/guard")
 def api_guard():
     return {**summary(guard.findings), "learned": guard.learned,
-            "baseline": guard.export_baseline(), "events": store.guard_events(50)}
+            "baseline": guard.export_baseline(), "events": store.guard_events(50, FIX_TS)}
 
 
 @app.get("/api/health")
 def api_health():
-    return health.report()
+    rep = health.report()
+    for s in rep.get("sessions") or []:      # Ah of old discharge sessions came from the BMS current field
+        s["pre_fix"] = s.get("kind") == "discharge" and pre_fix(s.get("start_ts"), FIX_TS)
+    return rep
 
 
 @app.get("/api/version")
@@ -811,7 +830,7 @@ def api_ride_live():
     summ = rides_mod.summary(r)
     a = rideanalysis.analyze(r, SETTINGS, dem, settings_mod.total_mass(SETTINGS))
     mx = tripmax.compute(r, store.samples_between(r[0]["ts"], r[-1]["ts"]), a,
-                         store.beep_events_between(r[0]["ts"], r[-1]["ts"]))
+                         store.beep_events_between(r[0]["ts"], r[-1]["ts"]), FIX_TS)
     tail = rides_mod.track(r)[-900:]
     return {"live": True, "summary": summ, "totals": a.get("totals") if a.get("ok") else None,
             "max": mx["items"], "alarms": mx["alarms"]["count"], "track": tail,
@@ -832,7 +851,7 @@ def api_ride_max(ride_id: int):
         return _err(Exception("turen finns inte"), 404)
     t0, t1 = r[0]["ts"], r[-1]["ts"]
     return tripmax.compute(r, store.samples_between(t0, t1), _analysis(ride_id),
-                           store.beep_events_between(t0, t1))
+                           store.beep_events_between(t0, t1), FIX_TS)
 
 
 @app.get("/api/analysis/grade-energy")

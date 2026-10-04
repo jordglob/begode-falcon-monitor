@@ -10,6 +10,8 @@ from __future__ import annotations
 import time
 from collections import deque
 
+from .sampling import simultaneous_spread
+
 MIN_LOAD_A = 2.0      # ignore samples below this current
 MIN_SPAN_A = 3.0      # need this much current spread for a usable slope
 WINDOW_S = 120
@@ -87,7 +89,12 @@ def energy_view(snapshot: dict, sag: dict, link_info: dict,
             "strings": cells,
             "cell_min_mv": min(all_mv) if all_mv else None,
             "cell_max_mv": max(all_mv) if all_mv else None,
-            "cell_spread_mv": (max(all_mv) - min(all_mv)) if all_mv else None,
+            # spread between cells measured at the same instant (inside a half-pack); the
+            # whole-pack figure mixes measuring instants and only means something at rest
+            "cell_spread_mv": max((x for x in (simultaneous_spread(s["cells_mv"]) for s in cells.values())
+                                   if x is not None), default=None),
+            "cell_spread_pack_mv": (max(all_mv) - min(all_mv)) if all_mv else None,
+            "cell_spread_pack_valid": at_rest,
             "bms": bms,
             "groups": groups,
             "soc_guess_pct": soc_from_cell_v(mean_cell_v) if mean_cell_v else None,

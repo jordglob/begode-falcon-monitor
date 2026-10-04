@@ -6,6 +6,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .sampling import ARTIFACT_CODES, pre_fix
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
   ts REAL PRIMARY KEY,
@@ -88,10 +90,13 @@ class Store:
                         (time.time(), level, code, where, text))
         self.db.commit()
 
-    def guard_events(self, limit: int = 100) -> list[dict]:
+    def guard_events(self, limit: int = 100, fix_ts: float | None = None) -> list[dict]:
         cur = self.db.execute("SELECT ts, level, code, where_, text FROM guard_events "
                               "ORDER BY ts DESC LIMIT ?", (limit,))
-        return [dict(zip(("ts", "level", "code", "where", "text"), r)) for r in cur.fetchall()]
+        rows = [dict(zip(("ts", "level", "code", "where", "text"), r)) for r in cur.fetchall()]
+        for r in rows:        # kept, not deleted: old artifact findings are only marked
+            r["pre_fix"] = r["code"] in ARTIFACT_CODES and pre_fix(r["ts"], fix_ts)
+        return rows
 
     def add_control(self, row: dict) -> None:
         self.db.execute("INSERT INTO control_log VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",

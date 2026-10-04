@@ -6,7 +6,10 @@ window (cells, temperatures), the elevation analysis (grades) and the logged ala
 """
 from __future__ import annotations
 
-from .rides import _speed
+from .rides import trusted_speed
+from .sampling import ARTIFACT_BEEP_KEYS, pre_fix
+
+GRADE_SUSPECT_PCT = 15.0    # steeper than this over 10 m is almost always the terrain model (bridges, quays)
 
 
 def _pos_at(points: list[dict], ts: float) -> tuple[float | None, float | None]:
@@ -23,7 +26,8 @@ def _ext(rows, key, fn=max, getter=None):
     return v, r["ts"]
 
 
-def compute(points: list[dict], samples: list[dict], analysis: dict | None, events: list[dict]) -> dict:
+def compute(points: list[dict], samples: list[dict], analysis: dict | None, events: list[dict],
+            fix_ts: float | None = None) -> dict:
     items = []
 
     def add(key, label, value, unit, ts, level=None, note=None, dec=1):
@@ -33,7 +37,7 @@ def compute(points: list[dict], samples: list[dict], analysis: dict | None, even
         items.append({"key": key, "label": label, "value": round(value, dec) if dec is not None else value,
                       "unit": unit, "ts": ts, "lat": lat, "lon": lon, "level": level, "note": note})
 
-    v, t = _ext(points, None, max, _speed)
+    v, t = _ext(points, None, max, trusted_speed)
     add("speed", "Maxfart", v, "km/h", t)
     v, t = _ext(points, "pwm_max")
     if v is not None:
@@ -69,15 +73,22 @@ def compute(points: list[dict], samples: list[dict], analysis: dict | None, even
         if prof:
             up = max(prof, key=lambda r: r[2])
             dn = min(prof, key=lambda r: r[2])
-            add("grade_up", "Brantaste uppför", tot.get("steepest_up_pct"), "%", up[5])
-            add("grade_down", "Brantaste nedför", tot.get("steepest_down_pct"), "%", dn[5])
+            for key, label, g, ts in (("grade_up", "Brantaste uppför", tot.get("steepest_up_pct"), up[5]),
+                                      ("grade_down", "Brantaste nedför", tot.get("steepest_down_pct"), dn[5])):
+                suspect = g is not None and abs(g) > GRADE_SUSPECT_PCT
+                add(key, label, g, "%", ts, "warn" if suspect else None,
+                    "troligen fel i höjdmodellen (bro, kaj)" if suspect else None)
             hi = max(prof, key=lambda r: r[1])
             add("elev_max", "Högsta punkt", tot.get("max_elev_m"), "m", hi[5], dec=0)
 
     alarms = [e for e in events if e.get("level") == "alarm" and e.get("new") not in (None, "None", "False", "normal", "")]
+    # alarms that were measuring artifacts before the fix are listed but not counted
+    old = [e for e in alarms if e.get("key") in ARTIFACT_BEEP_KEYS and pre_fix(e.get("ts"), fix_ts)]
+    alarms = [e for e in alarms if e not in old]
     kinds = sorted({e["key"] for e in alarms})
     return {"items": items, "alarms": {"count": len(alarms), "kinds": kinds,
                                        "events": [{**e, **dict(zip(("lat", "lon"), _pos_at(points, e["ts"])))}
-                                                  for e in alarms[:50]]},
+                                                  for e in alarms[:50]],
+                                       "pre_fix_count": len(old)},
             "notes": [] if any(p.get("current_max") is not None for p in points) else
             ["Ström, effekt, återvinning och lägsta spänning per tur sparas från version 0.15.0 – äldre turer saknar dem."]}
