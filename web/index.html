@@ -90,7 +90,8 @@ section.overlay.open{display:block}
     <div id="livemap" style="height:360px;border-radius:10px;margin-top:8px"></div>
     <div class="grid" id="livestats" style="margin-top:8px"></div>
     <div class="note">Uppdateras varannan sekund medan datorn är med på turen. Titta inte på skärmen när du kör – larmen hörs.</div></div>
-  <div class="card"><h2>Position</h2><div class="grid" id="gpsmain"></div><div class="note" id="gpsnote"></div></div>
+  <div class="card"><h2>Position</h2><div class="grid" id="gpsmain"></div><div class="note" id="gpsnote"></div>
+    <div style="margin-top:8px"><button class="btn" id="geobtn" onclick="phoneGps()">Använd den här enhetens GPS</button> <span class="note" id="geonote"></span></div></div>
   <div class="card"><h2>Turer</h2><div id="ridemerge"></div><table id="ridelist"></table>
     <div id="ridemodes" style="margin-top:10px;display:none"></div>
     <div id="ridemap" style="height:420px;border-radius:10px;margin-top:6px;display:none"></div>
@@ -357,6 +358,19 @@ async function bktick(){try{const b=await fetch('/api/backup').then(r=>r.json())
       <td>${x.odometer_m!=null?(x.odometer_m/1000).toFixed(1)+' km':'—'}</td><td class="note">${d}</td>
       <td><a href="/api/backup/file/${x.name}" download>ladda ner</a> <button class="btn" ${can?'':'disabled'} onclick="bkRestore('${x.name}')">återställ</button></td></tr>`}).join('');
 }catch(e){}}
+let geoWatch=null,geoLock=null,geoSent=0;
+async function phoneGps(){
+  if(geoWatch!=null){navigator.geolocation.clearWatch(geoWatch);geoWatch=null;try{geoLock&&geoLock.release()}catch(e){}
+    $('geobtn').textContent='Använd den här enhetens GPS';$('geonote').textContent='Avstängd.';return}
+  if(!window.isSecureContext||!navigator.geolocation){
+    $('geonote').innerHTML=`Webbläsaren lämnar bara ut positionen över https. Öppna <a href="https://${location.hostname}:8443/#pos">https://${location.hostname}:8443</a>, godkänn certifikatvarningen och tryck här igen.`;return}
+  geoSent=0;$('geobtn').textContent='Sluta använda den här enhetens GPS';$('geonote').textContent='Väntar på position …';
+  try{geoLock=await navigator.wakeLock.request('screen')}catch(e){}       // positions stop when the screen locks
+  geoWatch=navigator.geolocation.watchPosition(p=>{const c=p.coords;
+    fetch('/api/gps/push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lat:c.latitude,lon:c.longitude,
+      speed_kmh:c.speed!=null?c.speed*3.6:null,alt_m:c.altitude,course_deg:c.heading,accuracy_m:c.accuracy})}).then(()=>{geoSent++;
+      $('geonote').textContent=`Skickar den här enhetens position (${geoSent} st, noggrannhet ±${Math.round(c.accuracy)} m). Håll sidan öppen och skärmen tänd.`}).catch(()=>{})},
+    e=>{$('geonote').textContent='Enhetens GPS: '+e.message},{enableHighAccuracy:true,maximumAge:1000,timeout:20000})}
 async function gpstick(){try{if(!$('pos').classList.contains('act'))return;const g=await fetch('/api/gps').then(r=>r.json());
   const s=g.state||{},T=g.stats||{};
   const pos=s.lat!=null?`${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}`:'—';

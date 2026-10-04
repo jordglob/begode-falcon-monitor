@@ -128,7 +128,9 @@ beepwatch = BeepWatch(Path(os.environ.get("FALCON_BLACKBOX", Path.home() / ".loc
 SETTINGS = {**settings_mod.defaults(), **(store.get_json("settings") or {})}
 dem = Dem(SETTINGS.get("dem_dir"))
 GPS_ON = os.environ.get("FALCON_GPS", "auto") != "0"
-gps = GpsReader()
+# FALCON_GPS_DEV=/dev/ttyACM0 (or a /dev/serial/by-id name) forces a serial GPS; otherwise the
+# modem is used when there is one and a USB GPS is looked for when there is not
+gps = GpsReader(device=os.environ.get("FALCON_GPS_DEV") or None, baud=int(os.environ.get("FALCON_GPS_BAUD", "9600")))
 _last_gps_store = 0.0
 
 
@@ -174,10 +176,23 @@ if _wf:
     link.device_info["wheel_firmware"] = _wf["value"]
 
 
+MAIN_LOOP = None      # the loop the BLE/guard tasks live in; data from other threads is handed to it
+
+
+def _in_main_loop(fn, *args) -> None:
+    """Endpoints run in worker threads (and the https door in its own thread); everything that
+    touches the live state is done in the main loop, like the Bluetooth callbacks."""
+    if MAIN_LOOP is not None and MAIN_LOOP.is_running():
+        MAIN_LOOP.call_soon_threadsafe(fn, *args)
+    else:
+        fn(*args)
+
+
 async def sampler() -> None:
     last_status = None
     while True:
         await asyncio.sleep(SAMPLE_EVERY_S)
+        link.expire_bridge()
         if link.status != last_status:
             log_event(f"Bluetooth: {link.status}")
             last_status = link.status
@@ -311,6 +326,8 @@ async def guard_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_app):
+    global MAIN_LOOP
+    MAIN_LOOP = asyncio.get_running_loop()
     ble_on = os.environ.get("FALCON_BLE", "1") != "0"
     tasks = [*([asyncio.create_task(link.run())] if ble_on else []), asyncio.create_task(sampler()),
              *([asyncio.create_task(gps.run())] if GPS_ON else []),
@@ -634,9 +651,46 @@ async def api_backup_restore(req: Request):
     return {"ok": True, "results": results}
 
 
+@app.post("/api/gps/push")
+def api_gps_push(payload: dict):
+    """Position from the phone's own GPS (the web page's "use this device's GPS", or an app)."""
+    try:
+        lat, lon = float(payload["lat"]), float(payload["lon"])
+    except (KeyError, TypeError, ValueError):
+        return _err(Exception("lat och lon krävs"), 400)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return _err(Exception("orimlig position"), 400)
+    num = lambda k: float(payload[k]) if isinstance(payload.get(k), (int, float)) else None   # noqa: E731
+    sp = num("speed_kmh")
+    _in_main_loop(gps.push, lat, lon, sp if sp is not None and sp >= 0 else None, num("alt_m"),
+                  num("course_deg"), num("accuracy_m"))
+    return {"ok": True, "points": gps.ext_points + 1}
+
+
+@app.post("/api/inject")
+def api_inject(payload: dict):
+    """Live bridge: a phone app or logger board that holds the wheel's Bluetooth connection sends
+    the raw notification bytes on. {"data": ["<hex>", ...], "source": "iphone"}"""
+    want = os.environ.get("FALCON_INJECT_TOKEN")
+    if want and payload.get("token") != want:
+        return _err(Exception("fel token"), 403)
+    try:
+        chunks = [bytes.fromhex(h) for h in (payload.get("data") or [])]
+    except (TypeError, ValueError):
+        return _err(Exception("data ska vara en lista med hex-strängar"), 400)
+    if not chunks or sum(len(c) for c in chunks) > 200_000:
+        return _err(Exception("tom eller för stor sändning"), 400)
+    if link.connected and not link.bridged:
+        return _err(Exception("appens egen Bluetooth är ansluten till hjulet"), 409)
+    src = str(payload.get("source") or "telefon")[:24]
+    for c in chunks:
+        _in_main_loop(link.inject, c, src)
+    return {"ok": True, "chunks": len(chunks)}
+
+
 @app.get("/api/gps")
 def api_gps():
-    if not GPS_ON:
+    if not GPS_ON and not gps.ext_points:       # own receiver off and no phone has sent anything
         return {"status": "avstängd (FALCON_GPS=0)", "fix": False, "state": {}, "satellites": [],
                 "stats": {}, "stored_points": 0}
     rep = gps.report()
@@ -1003,7 +1057,39 @@ def api_log():
     return list(events)
 
 
+def _https_cert() -> tuple[str, str] | None:
+    """A self-signed certificate, made once. Browsers only hand out the device's position to
+    pages served over https, so the phone needs this to share its GPS with the page."""
+    import shutil
+    import subprocess
+    d = DB.parent
+    cert, key = d / "https-cert.pem", d / "https-key.pem"
+    if not (cert.exists() and key.exists()):
+        if not shutil.which("openssl"):
+            return None
+        r = subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650",
+                            "-subj", "/CN=falcon-monitor", "-keyout", str(key), "-out", str(cert)],
+                           capture_output=True, timeout=60)
+        if r.returncode:
+            return None
+        key.chmod(0o600)
+    return str(cert), str(key)
+
+
+def _start_https() -> None:
+    port = int(os.environ.get("FALCON_HTTPS_PORT", "8443"))
+    pair = _https_cert() if port else None
+    if not pair:
+        return
+    import threading
+    # same app, second door; lifespan off so the background loops are not started twice
+    cfg = uvicorn.Config(app, host="0.0.0.0", port=port, ssl_certfile=pair[0], ssl_keyfile=pair[1],
+                         lifespan="off", log_level="warning", timeout_graceful_shutdown=2)
+    threading.Thread(target=uvicorn.Server(cfg).run, daemon=True, name="https").start()
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    _start_https()
     # open SSE streams would otherwise block a Ctrl+C shutdown forever
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning", timeout_graceful_shutdown=2)

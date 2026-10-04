@@ -57,6 +57,8 @@ def _speed(row: dict) -> float | None:
 
 
 def good_fix(p: dict) -> bool:
+    if p.get("sats") is None and p.get("hdop") is not None:      # a phone gives accuracy, no satellite count
+        return p["hdop"] <= GOOD_HDOP
     return (p.get("sats") or 0) >= GOOD_SATS and (p.get("hdop") or 99) <= GOOD_HDOP
 
 

@@ -2,6 +2,21 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.27.0 – 2026-10-04
+- **Ready for a small Linux board on the wheel** (so the laptop can stay at home):
+  `deploy/install.sh` sets the app up as a boot-time service on Raspberry Pi OS / Debian / Armbian
+  with only bleak, fastapi and uvicorn; guide in `docs/logger-pa-hjulet.md`. Checked in a clean
+  Python environment on a PC, not yet on a real board.
+- **GPS from a USB or serial receiver** (NMEA), found automatically under `/dev/serial/by-id` when
+  there is no modem; `FALCON_GPS_DEV` / `FALCON_GPS_BAUD` to force one.
+- **GPS from the phone**: "Använd den här enhetens GPS" on the Position tab sends the browser's
+  position to the app (`POST /api/gps/push`); while it keeps coming it replaces the modem or USB
+  receiver. Browsers require https for this, so the app also listens on port 8443 with its own
+  self-signed certificate (`FALCON_HTTPS_PORT`, 0 = off).
+- **Live bridge** `POST /api/inject`: something else that holds the wheel's Bluetooth connection
+  can pass the raw data on; the app's own Bluetooth then stays off.
+- Data arriving from other threads (https door, endpoints) is handed to the main loop.
+
 ## 0.26.1 – 2026-10-04
 - Correction: 0.23.1 described the disagreeing BMS current rows as a property of BMS 2. Later
   in the same charge BMS 1 showed it too (5.8 A and 2.9 A). The finding `bms_rows` is therefore

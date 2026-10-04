@@ -62,3 +62,60 @@ def test_reader_parses_mmcli_output():
     rep = r.report()
     assert rep["fix"] and rep["status"] == "position" and got and rep["stats"]["first_fix_s"] is not None
     assert rep["state"]["rollover_corrected"] is True
+
+
+def test_reader_reads_a_serial_gps_receiver():
+    """A USB/serial receiver just sends NMEA lines; a pty stands in for it."""
+    import os
+    master, slave = os.openpty()
+    r = GpsReader(interval_s=0.01, device=os.ttyname(slave))
+    got = []
+    r.on_fix = got.append
+
+    async def go():
+        t = asyncio.ensure_future(r.run())
+        await asyncio.sleep(0.03)
+        assert got == []                                   # nothing sent yet: nothing stored
+        os.write(master, ("\r\n".join(REAL) + "\r\n").encode())
+        await asyncio.sleep(0.06)
+        n = len(got)
+        await asyncio.sleep(0.06)                          # silence: the old position is not stored again
+        t.cancel()
+        return n, len(got)
+    n, n_later = asyncio.run(go())
+    os.close(master)
+    os.close(slave)
+    assert n == 1 and n_later == 1
+    assert got[0]["lat"] is not None and r.report()["source"].startswith("USB-GPS") and r.status == "position"
+
+
+def test_pushed_phone_position_is_stored_and_hides_the_modem_for_a_while():
+    text = "  GPS | nmea: " + REAL[0] + "\n      |       " + "\n      |       ".join(REAL[1:]) + "\n"
+    r = GpsReader(modem="0", interval_s=0.01)
+    got = []
+    r.on_fix = got.append
+
+    async def fake_get():
+        return text
+    r._get = fake_get
+    r.push(51.5, 0.25, speed_kmh=21.6, alt_m=30.0, accuracy_m=6.0)
+    assert got[-1]["lat"] == 51.5 and got[-1]["fix_type"] == "telefon" and got[-1]["hdop"] == 1.2
+    rep = r.report()
+    assert rep["source"] == "telefonens GPS" and rep["fix"] and rep["state"]["speed_kmh"] == 21.6
+
+    async def go():
+        t = asyncio.ensure_future(r.run())
+        await asyncio.sleep(0.05)
+        t.cancel()
+    asyncio.run(go())
+    assert len(got) == 1                                   # the modem's own fixes were not stored meanwhile
+    r.ext_until = 0.0                                      # the phone stopped sending
+    asyncio.run(go())
+    assert len(got) > 1 and got[-1]["fix_type"] != "telefon"
+
+
+def test_phone_positions_count_as_good_fix_by_accuracy():
+    from falcon.rides import good_fix
+    assert good_fix({"sats": None, "hdop": 1.2}) and not good_fix({"sats": None, "hdop": 6.0})
+    assert good_fix({"sats": 9, "hdop": 1.0}) and not good_fix({"sats": 4, "hdop": 1.0})
+    assert not good_fix({"sats": None, "hdop": None})

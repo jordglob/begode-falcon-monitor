@@ -100,6 +100,9 @@ async def scan_by_address(address: str, timeout: float):
     return await _scan(lambda d, ad: d.address.upper() == address.upper(), timeout)
 
 
+BRIDGE_HOLD_S = 8.0     # no data from the bridge for this long = it is gone
+
+
 class WheelLink:
     def __init__(self, address: str | None, state: WheelState, on_frame=None, *,
                  connect_timeout: float = 25.0, stale_s: float = 8.0, scan_timeout: float = 15.0,
@@ -114,6 +117,7 @@ class WheelLink:
         self.connected = False
         self.last_frame_ts = 0.0
         self.status = "startar"
+        self.bridge_ts, self.bridge_name, self._bridge_live = 0.0, "", False
         self.device_info: dict = {}
         # tunables / injectable parts (tests)
         self.connect_timeout, self.stale_s, self.scan_timeout = connect_timeout, stale_s, scan_timeout
@@ -229,6 +233,35 @@ class WheelLink:
     def paused(self) -> bool:
         return time.time() < self.paused_until
 
+    # ---------- bridge: something else holds the wheel's only connection and passes the data on ----------
+    @property
+    def bridged(self) -> bool:
+        return time.time() - self.bridge_ts < BRIDGE_HOLD_S
+
+    def expire_bridge(self) -> None:
+        """Call regularly: a bridge that stopped sending must not leave the link 'connected'."""
+        if self._bridge_live and not self.bridged:
+            self._bridge_live = False
+            self.connected = False
+            self.status = "söker"
+            self._drop(f"{self.bridge_name} slutade skicka data")
+
+    def inject(self, data: bytes, source: str = "telefon") -> bool:
+        """Notification bytes received by a phone app or a logger board. Ignored while the own
+        Bluetooth session is up (two feeds into one assembler would only make garbage)."""
+        if self.connected and not self._bridge_live:
+            return False
+        if not self._bridge_live:
+            self._bridge_live = True
+            self.asm = FrameAssembler()
+            self.connects += 1
+            self.connected_since = time.time()
+            self._event(f"Bluetooth: data kommer via {source}")
+        self.bridge_ts, self.bridge_name = time.time(), source
+        self.connected, self.status = True, f"ansluten via {source}"
+        self._notify(None, bytearray(data))
+        return True
+
     async def _session(self, client, connect_timeout: float) -> tuple[bool, str]:
         """Connect + subscribe (bounded), then watch the data flow.
         Returns (reached_connected, reason it ended)."""
@@ -275,6 +308,10 @@ class WheelLink:
         last_clean = 0.0
         while True:
             client, address = None, self.address or self.address_seen
+            self.expire_bridge()
+            if self.bridged:              # the wheel takes one connection, and the bridge has it
+                await asyncio.sleep(1.0)
+                continue
             if self.paused:
                 left = self.paused_until - time.time()
                 self.status = f"släppt – hjulet fritt för mobilappen ({left/60:.0f} min kvar)"
@@ -351,6 +388,7 @@ class WheelLink:
                 "rssi_age_s": round(now - rssi[1]) if rssi else None,
                 "status": self.status,
                 "paused_until": self.paused_until if self.paused else None,
+                "bridge": self.bridge_name if self.bridged else None,
                 "last_frame_age_s": round(age, 1) if age is not None else None,
                 "dropped_bytes": self.asm.dropped, "device_info": self.device_info,
                 "stability": {

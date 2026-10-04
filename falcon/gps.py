@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import os
 import re
 import shutil
 import time
@@ -18,6 +19,7 @@ from collections import deque
 
 ROLLOVER = dt.timedelta(weeks=1024)
 KNOT_KMH = 1.852
+EXT_HOLD_S = 10              # pushed positions older than this no longer hide the own receiver
 ENABLE_RETRY_S = 30          # how often to try switching the modem's GPS back on
 
 
@@ -128,9 +130,34 @@ def find_mm_modem() -> str | None:
     return m.group(1) if m else None
 
 
+SERIAL_HINTS = ("u-blox", "ublox", "GPS", "GNSS", "gps", "gnss")
+BAUDS = {4800: "B4800", 9600: "B9600", 19200: "B19200", 38400: "B38400", 57600: "B57600", 115200: "B115200"}
+
+
+def find_serial_gps() -> str | None:
+    """A USB GPS receiver by its stable name under /dev/serial/by-id, or None."""
+    import glob
+    for p in sorted(glob.glob("/dev/serial/by-id/*")):
+        if any(h in os.path.basename(p) for h in SERIAL_HINTS):
+            return p
+    return None
+
+
 class GpsReader:
-    def __init__(self, modem: str | None = None, interval_s: float = 2.0):
+    """Position from the laptop's modem (ModemManager) or from a serial/USB GPS receiver that
+    sends NMEA (a small board on the wheel has no modem). device=None: the modem if there is
+    one, otherwise the first USB GPS found."""
+
+    def __init__(self, modem: str | None = None, interval_s: float = 2.0, device: str | None = None,
+                 baud: int = 9600):
         self.modem = modem
+        self.device, self.baud = device, baud
+        self._fd: int | None = None
+        self._buf = b""
+        self._last_data = 0.0
+        self.ext_until = 0.0                        # positions pushed from outside win until then
+        self.ext_state: dict = {}
+        self.ext_points = 0
         self.interval_s = interval_s
         self.nmea = Nmea()
         self.status = "startar"
@@ -163,20 +190,59 @@ class GpsReader:
         self.enable_tries += 1
         self.enable_error = err.decode(errors="replace").strip()[-200:] if p.returncode else None
 
+    def _read_serial(self) -> str:
+        """Whatever complete NMEA lines the receiver has sent since the last call."""
+        if self._fd is None:
+            self._fd = os.open(self.device, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
+            try:                      # a real serial port: raw mode at the receiver's speed
+                import termios
+                a = termios.tcgetattr(self._fd)
+                a[0], a[1], a[3] = 0, 0, 0
+                a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+                a[4] = a[5] = getattr(termios, BAUDS.get(self.baud, "B9600"))
+                termios.tcsetattr(self._fd, termios.TCSANOW, a)
+            except Exception:         # USB receivers and test ptys do not care about the speed
+                pass
+        try:
+            while True:
+                chunk = os.read(self._fd, 4096)
+                if not chunk:
+                    break
+                self._buf += chunk
+        except BlockingIOError:
+            pass
+        except OSError:               # unplugged: start over at the next poll
+            os.close(self._fd)
+            self._fd = None
+            raise
+        done, _, self._buf = self._buf.rpartition(b"\n")
+        self._buf = self._buf[-512:]
+        return done.decode("ascii", errors="replace")
+
     async def run(self) -> None:
         while True:
             try:
-                if self.modem is None:
+                if self.device is None and self.modem is None:
                     self.modem = find_mm_modem()
                     if self.modem is None:
-                        self.status = "ingen GPS hittad (ModemManager)"
+                        self.device = find_serial_gps()
+                    if self.modem is None and self.device is None:
+                        self.status = "ingen GPS hittad (varken modem eller USB-GPS)"
                         await asyncio.sleep(30)
                         continue
-                text = await self._get()
+                text = self._read_serial() if self.device else await self._get()
                 for line in re.findall(r"\$G[A-Z]{4},[^\s|]*", text):
                     self.nmea.feed(line)
                 self.polls += 1
                 self.last_ts = time.time()
+                if self.device:
+                    if "$G" in text:
+                        self._last_data = self.last_ts
+                    elif self.last_ts - self._last_data > 10:
+                        self.status = "USB-GPS:en är tyst"
+                    if "$G" not in text:      # nothing new this round: do not store the old position again
+                        await asyncio.sleep(self.interval_s)
+                        continue
                 if "$G" not in text:
                     self.status = "GPS avstängd i modemet – slår på"
                     if time.time() - self._last_enable >= ENABLE_RETRY_S:
@@ -189,6 +255,9 @@ class GpsReader:
                     self.status = "position"
                     if self.first_fix_s is None:
                         self.first_fix_s = round(time.time() - self.started)
+                    if time.time() < self.ext_until:      # the phone is sending better positions
+                        await asyncio.sleep(self.interval_s)
+                        continue
                     s = self.nmea.state
                     self.track.append((self.last_ts, s.get("lat"), s.get("lon"), s.get("speed_kmh")))
                     if self.on_fix:
@@ -199,12 +268,32 @@ class GpsReader:
                 self.status = f"fel: {e}"
             await asyncio.sleep(self.interval_s)
 
+    def push(self, lat: float, lon: float, speed_kmh: float | None = None, alt_m: float | None = None,
+             course_deg: float | None = None, accuracy_m: float | None = None) -> None:
+        """A position from outside: the phone's own GPS, sent by the web page or by an app.
+        While they keep coming (EXT_HOLD_S) they replace the modem / USB receiver."""
+        now = time.time()
+        self.ext_state = {"lat": lat, "lon": lon, "speed_kmh": speed_kmh, "alt_m": alt_m,
+                          "course_deg": course_deg, "sats_used": None, "fix_type": "telefon",
+                          "hdop": round(accuracy_m / 5.0, 2) if accuracy_m else None,   # same rough rule as below
+                          "accuracy_m": accuracy_m}
+        self.ext_until = now + EXT_HOLD_S
+        self.ext_points += 1
+        if self.first_fix_s is None:
+            self.first_fix_s = round(now - self.started)
+        self.track.append((now, lat, lon, speed_kmh))
+        if self.on_fix:
+            self.on_fix(dict(self.ext_state))
+
     def report(self) -> dict:
-        s = dict(self.nmea.state)
+        ext = time.time() < self.ext_until
+        s = dict(self.ext_state if ext else self.nmea.state)
         hdop = s.get("hdop")
         return {
-            "status": self.status, "source": f"ModemManager modem {self.modem}" if self.modem else None,
-            "fix": self.nmea.has_fix, "state": s,
+            "status": "position" if ext else self.status,
+            "source": ("telefonens GPS" if ext else f"USB-GPS {os.path.basename(self.device)}" if self.device
+                       else f"ModemManager modem {self.modem}" if self.modem else None),
+            "fix": True if ext else self.nmea.has_fix, "state": s, "phone_points": self.ext_points,
             "accuracy_m_guess": round(hdop * 5) if hdop else None,   # rough: HDOP x ~5 m
             "satellites": self.nmea.sats,
             "stats": {"polls": self.polls, "fix_share_pct": round(100 * self.fix_polls / self.polls, 1)
