@@ -330,3 +330,35 @@ def test_same_recording_with_a_truly_weak_cell_is_found():
     found, guard = replay(frames)
     codes_found = {code for _, code in found}
     assert "cell" in codes_found or "load_spread" in codes_found
+
+
+# ---------- the two current rows of one BMS ----------
+def _charging(base, rows1, rows2):
+    s = copy.deepcopy(base)
+    for k, rows in ((1, rows1), (2, rows2)):
+        s["bms"][k]["activity"] = "laddning"
+        s["bms"][k]["row_currents_a"] = list(rows)
+    s["battery_current_a"] = -7.4
+    return s
+
+
+def test_bms_rows_disagreeing_while_charging_is_reported(real_snapshot):
+    g = Guard()
+    for i in range(29):
+        f = g.update(_charging(real_snapshot, (3.6, 3.6), (5.6, 3.85)), now=i)
+    assert "bms_rows" not in codes(f)                      # not yet: rows update seconds apart at plug-in
+    f = g.update(_charging(real_snapshot, (3.6, 3.6), (5.6, 3.85)), now=30)
+    hit = [x for x in f if x.code == "bms_rows"]
+    assert len(hit) == 1 and hit[0].where == "BMS 2 (sträng B)" and 40 < hit[0].value < 50
+
+
+def test_bms_rows_agreeing_or_not_charging_is_quiet(real_snapshot):
+    g = Guard()
+    for i in range(60):
+        f = g.update(_charging(real_snapshot, (3.6, 3.6), (3.9, 3.85)), now=i)
+    assert "bms_rows" not in codes(f)
+    s = _charging(real_snapshot, (3.6, 3.6), (5.6, 3.85))
+    s["bms"][2]["activity"] = "urladdning"                 # riding: the field does not follow the load
+    for i in range(60):
+        f = g.update(s, now=100 + i)
+    assert "bms_rows" not in codes(f)

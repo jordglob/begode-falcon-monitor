@@ -259,3 +259,15 @@ def test_refusal_reason_is_shown():
     v = Verifier(w.send, w.read, lambda: "motorn arbetar (fasström)")
     r = run(v.apply(cmd_pedal_mode("hard"), b"h"))
     assert r.status == "refused" and r.detail == "motorn arbetar (fasström)"
+
+
+def test_bms_current_uses_the_row_that_agrees_with_the_others():
+    st = WheelState()
+    for sub, cur in ((0, 3.6), (1, 3.6), (2, 5.6), (3, 3.9)):
+        st.groups[sub] = {"group": sub, "bms": 1 if sub < 2 else 2, "half": 1 if sub % 2 == 0 else 2,
+                          "current_a": cur, "voltage_v": 95.0, "half_voltage_v": 47.5, "temp_a_c": 16,
+                          "temp_b_c": 15, "activity": "laddning", "temp_state": "normal", "volt_state": "normal",
+                          "protection": "normal", "mos": "på", "cell_balance": False, "group_balance": False}
+    b = st.bms()
+    assert b[1]["current_a"] == 3.6 and b[2]["current_a"] == 3.9 and b[2]["row_currents_a"] == [5.6, 3.9]
+    assert st.battery_current() == pytest.approx(-7.5)     # charger showed 7 A; the first rows alone gave 9.2

@@ -9,7 +9,8 @@ Dokumentet är tänkt som diskussionsunderlag, till exempel mot tillverkaren.
 slutsatser från mätdata, inte kunskap om hur koden ser ut.
 
 **Underlag:** 69 inspelade blackbox-filer från 2026-10-03 (ca 15 minuter rådata, 545 kompletta
-BMS-cykler, 2660 cellramar), mest från en kvällstur på 20 km.
+BMS-cykler, 2660 cellramar), mest från en kvällstur på 20 km, samt en inspelad laddning
+2026-10-04 (25 minuter, hjulet påslaget, laddarens display som referens).
 
 ---
 
@@ -17,7 +18,7 @@ BMS-cykler, 2660 cellramar), mest från en kvällstur på 20 km.
 
 | # | Förslag | Varför | Styrka i underlaget |
 |---|---|---|---|
-| 1 | BMS ska rapportera verklig, signerad ström per paket | Fältet följer inte lasten alls | Stark |
+| 1 | BMS ska rapportera verklig, signerad ström per paket | Fältet är för långsamt för att följa lasten | Stark |
 | 2 | Alla celler ska mätas i samma ögonblick | Halvpaketen mäts var för sig och skiljer upp till 189 mV | Stark |
 | 3 | Tidsstämpel eller löpnummer i varje paket | Går inte att para ihop ström och cellspänning | Stark |
 | 4 | Hjulet ska självt jämföra de två paketens ström | Ett avbränt shuntmotstånd syns inte utifrån | Medel (följer av 1) |
@@ -26,6 +27,7 @@ BMS-cykler, 2660 cellramar), mest från en kvällstur på 20 km.
 | 7 | Dokumentera larmbitar och okända fält | Två tolkningar i omlopp | Medel |
 | 8 | Dokumentera den automatiska avstängningen | Nedräkning startar utan känd orsak | Svag (en händelse) |
 | 9 | Stabilare Bluetooth-länk | Många avbrott under färd | Svag (mottagaren kan vara orsaken) |
+| 10 | De två strömvärdena i en BMS ska jämföras av hjulet | BMS 2 visar 5,6 A och 3,85 A samtidigt | Stark (ett hjul) |
 
 ---
 
@@ -40,14 +42,18 @@ ordet, tiondels ampere). Jämfört med moderkortets strömmätning (paket 7) und
 - De två raderna från samma BMS visar olika värden (t.ex. 4,7 A och 1,7 A samtidigt).
 - Värdet ligger fruset i 2–7 sekunder åt gången.
 
-**Följd.** Det går inte att jämföra de två paketens ström, och därmed inte att upptäcka en
-shunt som mäter fel eller ett paket som inte bär ström. En app som försöker får falsklarm
+**Under laddning** ser det annorlunda ut: där är strömmen stadig, och fältet visar rimliga och
+stabila värden som uppdateras ungefär var sjunde sekund. Fältet verkar alltså vara en riktig men
+långsam mätning – för långsam för körning, där strömmen växlar på delar av en sekund.
+
+**Följd.** Under körning går det inte att jämföra de två paketens ström, och därmed inte att
+upptäcka en shunt som mäter fel eller ett paket som inte bär ström. En app som försöker får falsklarm
 (den här appen gav över 100 sådana på en tur innan kontrollen stängdes av).
 
 **Förslag.**
 - Rapportera paketets verkliga ström, med tecken (plus = urladdning, minus = laddning/återvinning).
 - Samma värde på båda raderna från samma BMS, uppdaterat i varje ram.
-- Om fältet i själva verket är något annat (t.ex. ett medelvärde eller en laddström): dokumentera vad.
+- Om fältet är ett medelvärde: dokumentera över hur lång tid, och skicka dessutom ett ögonblicksvärde.
 
 ## 2. Cellspänningar: mät alla celler samtidigt
 
@@ -145,13 +151,40 @@ för att luckorna begränsar hur mycket av underlaget ovan som finns.
 
 **Förslag.** Inget konkret innan det är provat med en bättre mottagare.
 
+## 10. Jämför de två strömvärdena i varje BMS
+
+**Iakttagelse.** Varje BMS skickar sin ström på två rader. Under en stadig laddning, med
+laddarens display på 7 A:
+
+| | Rad 1 | Rad 2 |
+|---|---|---|
+| BMS 1 (sträng A) | 3,6 A | 3,6 A |
+| BMS 2 (sträng B) | 5,6 A | 3,85 A |
+
+- BMS 1:s rader är överens (kvot 1,00).
+- BMS 2:s rad 1 låg 41–52 % över rad 2 under hela laddningen. Kvoten var konstant, så det är
+  inget tidsfel.
+- De tre värden som är överens ger 7,4 A totalt, vilket stämmer med laddaren. Med rad 1 från
+  varje BMS blir summan 9,2 A.
+- Moderkortet ser inte laddströmmen alls (det visar hjulets egen förbrukning), så BMS är den
+  enda källan under laddning.
+
+**Följd.** Ett av strömvärdena i BMS 2 visar för mycket. Det kan vara en strömmätning (shunt)
+som mäter fel eller något i mjukvaran – det går inte att avgöra utifrån. Hjulet självt
+reagerar inte på skillnaden.
+
+**Förslag.**
+- Låt BMS jämföra sina två strömvärden och larma när de skiljer mer än en rimlig tolerans.
+- Dokumentera om de två raderna är tänkta att visa samma mätning eller två olika.
+
 ---
 
 ## Vad underlaget inte visar
 
 - Underlaget är snett: blackbox-filer sparas kring larm, och larmen kom mest vid låg last.
   Över 15 A finns bara ett tiotal mätpunkter för BMS-strömmen.
-- Laddning är inte inspelad. BMS-strömmen kan vara riktig under laddning.
+- Bara en laddning är inspelad, och referensen är laddarens display (hela ampere).
+- Moderkortets strömskala är inte bekräftad mot en oberoende mätning.
 - Allt gäller ett enda hjul med en firmwareversion.
 - Att halvpaketen mäts vid olika tidpunkter är den enklaste förklaringen till mönstret,
   men den är inte bekräftad mot hjulets kod.

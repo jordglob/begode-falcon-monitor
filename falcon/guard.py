@@ -14,6 +14,7 @@ Checks, in priority order (1-3 are switched off, see SHUNT_CHECKS):
   4. string drift  - string A vs B mean cell voltage (at rest)
   5. temperature   - group temperature spread (under load)
   6. cells/banks/balancing - single-cell outliers, bank offsets, stuck balancing
+  7. BMS rows       - the two current values of one BMS disagree while charging
 
 The wheel has two packs in parallel, each with its own smart BMS (BMS 1 = string A,
 BMS 2 = string B, per WheelLog). Each BMS measures its pack current with its own shunt,
@@ -41,6 +42,10 @@ SHUNT_WARN = 0.20      # group reads >20 % above the others / its own baseline
 SHUNT_STEP = 0.25      # sudden jump of >25 % in a group's ratio = alarm
 SUM_WARN = 0.20        # BMS sum differs >20 % from controller current
 DROPOUT_FRAC = 0.10    # group below 10 % of the others' mean under load
+# the two current rows of one BMS while charging: steady current, so the slow field is valid
+ROW_MIN_A = 1.0        # both rows must show at least this
+ROW_WARN = 0.20        # rows of one BMS differ more than this
+ROW_HOLD = 30          # ... for this many updates in a row (rows update seconds apart at plug-in)
 CELL_WARN_MV, CELL_ALARM_MV = 30, 60
 STRING_WARN_MV, STRING_ALARM_MV = 20, 40
 BANK_WARN_MV = 15
@@ -216,6 +221,7 @@ class GroupTrack:
     step_count: int = 0
     dropout_count: int = 0
     balance_since: float | None = None
+    row_count: int = 0
 
 
 class Guard:
@@ -263,6 +269,7 @@ class Guard:
             rest = self.load_spread.trace.rest_s(now)        # None = no packet-rate history (tests, start)
             if abs(pack_i) < REST_A and (rest is None or rest >= REST_S):
                 out += self._voltage_checks(snap.get("cells") or {})
+            out += self._row_checks(bms)
             out += self._balance_checks(bms, now)
         if not any(LEVELS[f.level] >= LEVELS["warn"] for f in out):
             out.insert(0, Finding("ok", "ok", "", "Packen i balans"))
@@ -375,6 +382,27 @@ class Guard:
                                    f"Sträng A och B skiljer {abs(d):.0f} mV per cell i vila. Sträng {hi} ligger "
                                    f"högre — kan betyda att den inte laddats ur lika mycket, dvs. bar mindre "
                                    f"ström (bortkopplat paket eller högre motstånd).", d))
+        return out
+
+    # ---------- 7: the two current rows of one BMS, while charging ----------
+    def _row_checks(self, bms: dict) -> list[Finding]:
+        out = []
+        for k, b in bms.items():
+            t = self.groups.setdefault(k, GroupTrack())
+            rows = [abs(c) for c in (b.get("row_currents_a") or []) if c is not None]
+            ok = b.get("activity") == "laddning" and len(rows) == 2 and min(rows) >= ROW_MIN_A
+            dev = max(rows) / min(rows) - 1.0 if ok else 0.0
+            if dev <= ROW_WARN:
+                t.row_count = 0
+                continue
+            t.row_count += 1
+            if t.row_count >= ROW_HOLD:
+                hi = rows.index(max(rows)) + 1
+                out.append(Finding("warn", "bms_rows", _name(k),
+                                   f"{_name(k)}: de två strömvärdena skiljer {dev * 100:.0f} % under laddning "
+                                   f"({rows[0]:.1f} A och {rows[1]:.1f} A). De borde visa samma ström – rad {hi} "
+                                   f"visar mer. Kan vara en strömmätning (shunt) som mäter fel; appen räknar "
+                                   f"på det värde som stämmer med det andra paketet.", round(dev * 100, 1)))
         return out
 
     # ---------- 5: temperatures under load ----------

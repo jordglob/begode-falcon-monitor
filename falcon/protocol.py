@@ -9,6 +9,7 @@ com.euc.android.protocol.*). Frame layout as captured from a Falcon Pro:
 """
 from __future__ import annotations
 
+import statistics
 import struct
 import time
 from dataclasses import dataclass, field
@@ -282,16 +283,22 @@ class WheelState:
     def bms(self) -> dict:
         """Two BMS units (one per parallel pack), merged from their two rows."""
         out = {}
+        # Each BMS sends its current on both of its rows. They should agree; on this wheel BMS 2's
+        # first row reads ~46 % above its second (charge 2026-10-04: 3.6/3.6 and 5.6/3.85 A while
+        # the charger showed 7 A). Use the row closest to what the other rows say.
+        mid = statistics.median(abs(g["current_a"]) for g in self.groups.values()) if self.groups else 0.0
         for n, string in ((1, "A"), (2, "B")):
-            rows = [g for g in self.groups.values() if g["bms"] == n]
+            rows = sorted((g for g in self.groups.values() if g["bms"] == n), key=lambda g: g["half"])
             if not rows:
                 continue
             even = next((g for g in rows if g["half"] == 1), rows[0])
+            best = min(rows, key=lambda g: abs(abs(g["current_a"]) - mid))
             temps = [t for g in sorted(rows, key=lambda g: g["half"])
                      for t in (g["temp_a_c"], g["temp_b_c"])]
             out[n] = {
                 "bms": n, "string": string,
-                "current_a": even["current_a"],
+                "current_a": best["current_a"],
+                "row_currents_a": [g["current_a"] for g in rows],
                 "voltage_v": even["voltage_v"],
                 "half_voltages_v": [g["half_voltage_v"] for g in sorted(rows, key=lambda g: g["half"])],
                 "temps_c": temps,

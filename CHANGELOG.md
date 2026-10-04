@@ -2,6 +2,15 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.23.1 – 2026-10-04
+- First recorded charge (25 min, wheel on): the controller does not see the charge current, so
+  the BMS field is the only source while charging – and there it is steady and plausible
+  (updates every ~7 s). But the two rows of BMS 2 disagree: 5.6 A and 3.85 A, a constant ratio of
+  1.46, while BMS 1 shows 3.6 A on both and the charger displayed 7 A. Charge current now uses,
+  per BMS, the row that agrees with the other rows (7.4 A instead of 9.2 A).
+- New guard finding `bms_rows`: the two current values of one BMS differ by more than 20 % for
+  30 s while charging. A steady-state comparison, valid where the shunt checks were not.
+
 ## 0.23.0 – 2026-10-04
 - **Cell voltages are only compared when they were measured at the same instant.** Each BMS
   measures its 24 cells as two half-packs of 12 at different moments, frames are often repeats,
