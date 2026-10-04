@@ -2,6 +2,12 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.26.1 – 2026-10-04
+- Correction: 0.23.1 described the disagreeing BMS current rows as a property of BMS 2. Later
+  in the same charge BMS 1 showed it too (5.8 A and 2.9 A). The finding `bms_rows` is therefore
+  information, not a warning, and no longer suggests a faulty current sensor; the firmware
+  proposal document says the same.
+
 ## 0.26.0 – 2026-10-04
 - **Safe speed right now** on the safety-margin card: the speed that still leaves 20 % margin
   (where the wheel starts beeping) at the battery's present no-load voltage – for steady riding,

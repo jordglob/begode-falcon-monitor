@@ -350,6 +350,7 @@ def test_bms_rows_disagreeing_while_charging_is_reported(real_snapshot):
     f = g.update(_charging(real_snapshot, (3.6, 3.6), (5.6, 3.85)), now=30)
     hit = [x for x in f if x.code == "bms_rows"]
     assert len(hit) == 1 and hit[0].where == "BMS 2 (sträng B)" and 40 < hit[0].value < 50
+    assert hit[0].level == "info" and "shunt" not in hit[0].text      # seen on both packs: cause unknown
 
 
 def test_bms_rows_agreeing_or_not_charging_is_quiet(real_snapshot):

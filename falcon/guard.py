@@ -398,11 +398,15 @@ class Guard:
             t.row_count += 1
             if t.row_count >= ROW_HOLD:
                 hi = rows.index(max(rows)) + 1
-                out.append(Finding("warn", "bms_rows", _name(k),
+                # information, not a warning: seen on BOTH packs during one normal charge
+                # (2026-10-04), always row 1 high, so it is more likely how the BMS reports than
+                # a broken current sensor. What the rows mean is unknown.
+                out.append(Finding("info", "bms_rows", _name(k),
                                    f"{_name(k)}: de två strömvärdena skiljer {dev * 100:.0f} % under laddning "
-                                   f"({rows[0]:.1f} A och {rows[1]:.1f} A). De borde visa samma ström – rad {hi} "
-                                   f"visar mer. Kan vara en strömmätning (shunt) som mäter fel; appen räknar "
-                                   f"på det värde som stämmer med det andra paketet.", round(dev * 100, 1)))
+                                   f"({rows[0]:.1f} A och {rows[1]:.1f} A) – rad {hi} visar mer. Det har setts "
+                                   f"på båda paketen och orsaken är okänd; det behöver inte vara ett fel. "
+                                   f"Appen räknar på det värde som stämmer med det andra paketet.",
+                                   round(dev * 100, 1)))
         return out
 
     # ---------- 5: temperatures under load ----------

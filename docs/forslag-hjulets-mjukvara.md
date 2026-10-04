@@ -27,7 +27,7 @@ BMS-cykler, 2660 cellramar), mest från en kvällstur på 20 km, samt en inspela
 | 7 | Dokumentera larmbitar och okända fält | Två tolkningar i omlopp | Medel |
 | 8 | Dokumentera den automatiska avstängningen | Nedräkning startar utan känd orsak | Svag (en händelse) |
 | 9 | Stabilare Bluetooth-länk | Många avbrott under färd | Svag (mottagaren kan vara orsaken) |
-| 10 | De två strömvärdena i en BMS ska jämföras av hjulet | BMS 2 visar 5,6 A och 3,85 A samtidigt | Stark (ett hjul) |
+| 10 | Dokumentera och jämför de två strömvärdena i varje BMS | Raderna är tidvis oense, i båda paketen | Medel (en laddning) |
 
 ---
 
@@ -153,29 +153,35 @@ för att luckorna begränsar hur mycket av underlaget ovan som finns.
 
 ## 10. Jämför de två strömvärdena i varje BMS
 
-**Iakttagelse.** Varje BMS skickar sin ström på två rader. Under en stadig laddning, med
-laddarens display på 7 A:
+**Iakttagelse.** Varje BMS skickar sin ström på två rader. Under en laddning, med laddarens
+display på 7 A, var raderna tidvis oense – i båda paketen:
 
-| | Rad 1 | Rad 2 |
+| Tid in i laddningen | BMS 1 rad 1 / rad 2 | BMS 2 rad 1 / rad 2 |
 |---|---|---|
-| BMS 1 (sträng A) | 3,6 A | 3,6 A |
-| BMS 2 (sträng B) | 5,6 A | 3,85 A |
+| 0–25 min (stadig ström) | 3,6 / 3,6 A | 5,6 / 3,85 A |
+| ca 43 min | 5,8 / 2,9 A | – |
+| ca 60 min | 4,9 / 1,9 A | – |
+| ca 65 min (avtagande ström) | 1,5 / 1,4 A | 2,1–2,4 / 1,4–1,6 A |
 
-- BMS 1:s rader är överens (kvot 1,00).
-- BMS 2:s rad 1 låg 41–52 % över rad 2 under hela laddningen. Kvoten var konstant, så det är
-  inget tidsfel.
-- De tre värden som är överens ger 7,4 A totalt, vilket stämmer med laddaren. Med rad 1 från
-  varje BMS blir summan 9,2 A.
+- Under de första 25 minuterna var BMS 1:s rader överens, medan BMS 2:s rad 1 låg 41–52 % över
+  rad 2 med konstant kvot (rad 1 ≈ 1,44 × rad 2).
+- Senare under samma laddning visade BMS 1:s rad 1 ungefär dubbelt så mycket som rad 2 i
+  cirka 17 minuter. Den delen är bara känd från appens larmlogg, inte från en inspelning.
+- Det är alltid rad 1 som visar mer, aldrig rad 2.
+- De värden som är överens ger cirka 7,4 A totalt under den stadiga delen, vilket stämmer med
+  laddaren. Med rad 1 från varje BMS blir summan 9,2 A.
 - Moderkortet ser inte laddströmmen alls (det visar hjulets egen förbrukning), så BMS är den
   enda källan under laddning.
 
-**Följd.** Ett av strömvärdena i BMS 2 visar för mycket. Det kan vara en strömmätning (shunt)
-som mäter fel eller något i mjukvaran – det går inte att avgöra utifrån. Hjulet självt
-reagerar inte på skillnaden.
+**Följd.** Det går inte att säga vilket paket som laddas med hur mycket, och inte heller om
+något är fel. Eftersom avvikelsen dyker upp i båda paketen är det troligare att raderna inte
+visar samma mätning, eller att rapporteringen ändras under laddningens gång, än att en enskild
+strömmätning är trasig – men underlaget räcker inte för att avgöra det. Hjulet självt reagerar
+inte på skillnaden.
 
 **Förslag.**
-- Låt BMS jämföra sina två strömvärden och larma när de skiljer mer än en rimlig tolerans.
-- Dokumentera om de två raderna är tänkta att visa samma mätning eller två olika.
+- Dokumentera vad de två raderna visar: samma mätning två gånger, eller två olika.
+- Om de ska vara lika: låt BMS jämföra dem och larma när de skiljer mer än en rimlig tolerans.
 
 ---
 
@@ -183,7 +189,10 @@ reagerar inte på skillnaden.
 
 - Underlaget är snett: blackbox-filer sparas kring larm, och larmen kom mest vid låg last.
   Över 15 A finns bara ett tiotal mätpunkter för BMS-strömmen.
-- Bara en laddning är inspelad, och referensen är laddarens display (hela ampere).
+- Bara en laddning är inspelad, och bara dess första 25 minuter i detalj; referensen är
+  laddarens display (hela ampere).
+- En tidigare version av det här dokumentet pekade ut BMS 2 som avvikande. Senare data från
+  samma laddning visade samma sak i BMS 1.
 - Moderkortets strömskala är inte bekräftad mot en oberoende mätning.
 - Allt gäller ett enda hjul med en firmwareversion.
 - Att halvpaketen mäts vid olika tidpunkter är den enklaste förklaringen till mönstret,

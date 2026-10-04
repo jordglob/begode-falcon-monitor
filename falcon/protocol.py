@@ -283,9 +283,10 @@ class WheelState:
     def bms(self) -> dict:
         """Two BMS units (one per parallel pack), merged from their two rows."""
         out = {}
-        # Each BMS sends its current on both of its rows. They should agree; on this wheel BMS 2's
-        # first row reads ~46 % above its second (charge 2026-10-04: 3.6/3.6 and 5.6/3.85 A while
-        # the charger showed 7 A). Use the row closest to what the other rows say.
+        # Each BMS sends a current on both of its rows, and they do not always agree: during one
+        # charge (2026-10-04, charger showing 7 A) BMS 2 read 5.6/3.85 A and, later, BMS 1 read
+        # 5.8/2.9 A - always the first row high. What the rows mean is not known, so use the
+        # row closest to what the other rows say (3.6 + 3.85 = 7.4 A, close to the charger).
         mid = statistics.median(abs(g["current_a"]) for g in self.groups.values()) if self.groups else 0.0
         for n, string in ((1, "A"), (2, "B")):
             rows = sorted((g for g in self.groups.values() if g["bms"] == n), key=lambda g: g["half"])
