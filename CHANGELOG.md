@@ -2,6 +2,102 @@
 
 All notable changes. Versions follow `falcon/__init__.py`.
 
+## 0.28.1 – 2026-10-05
+- **The four group voltages at rest** (`group_voltage`): more than 0.5 V apart is a warning, more
+  than 1.0 V an alarm, after 15 s of rest and 10 s of persistence. 0.5 V is the limit Begode's
+  own support gives for "the four batteries"; with the June 2026 fault they were 3.0 V apart long
+  before the wheel cut out. Healthy at rest: 0.2 V.
+- Alarms now name the battery group the way the Begode app does – LF, RF, LB, RB – next to the
+  BMS and row, so the same group can be found in both apps.
+- docs: the firmware handover describes the real fault and the three checks that would have
+  caught it.
+
+## 0.28.0 – 2026-10-04
+- **Frozen-group alarm** (`group_frozen`) – the signature of the owner's real fault. In June 2026
+  the Begode app showed the RF group "all the time reporting the same voltage and 0 current"
+  while the other three moved; its measuring board had burnt components, the wheel flagged
+  nothing, the packs drifted apart, the wheel beeped on a climb and cut out over a bump. The
+  alarm fires when one group's voltage has not changed for 8 s and it shows at most 0.5 A, while
+  each of the other three groups moved at least 0.3 V and they average at least 1 A.
+  0 false alarms on 5086 real rows (hard riding included); with the fault injected under load it
+  is found in a median of 7 s. Works while riding, which the current-only checks do not.
+
+## 0.27.9 – 2026-10-04
+- The 3-minute running-average alarm for a silent current row (`row_silent`) now also covers a
+  broken pack that shows a few tenths of an ampere (the owner's case: 0.1–0.3 A): the row's mean
+  must be at most 0.40 A and under 15 % of the others' (healthy minimum on a real ride: 36 %).
+  With that fault injected into the recorded ride it is found in 55 of 60 cases within ten
+  minutes, median just under three minutes; 0 false alarms.
+- Tried and rejected: a shorter running average, also one that only counts during hard load
+  measured by the controller. On a healthy ride a row's 10–30 s average falls to 0.01–0.5 A even
+  while the controller averages 12–16 A, so a dead row cannot be told from a healthy one that
+  fast on the current side. The fast check under load is the voltage one (0.27.7).
+
+## 0.27.8 – 2026-10-04
+- **Fast dead-row alarm on the current side** (`row_dead`): one of the four BMS current rows
+  shows at most 0.5 A while the other three average at least 8 A (2 A while charging) for 10 s –
+  two updates of the BMS current, which arrives every 1.2 s but only changes about every 5 s.
+  In the owner's earlier pack failure the broken pack showed 0.1–0.3 A. 0 false alarms on 61 000
+  healthy rows (real frames, a full ride, a charge). With that fault injected into the recorded
+  ride it was caught within five minutes in 17 of 40 cases (median 79 s): while riding the BMS
+  rows seldom show 8 A for ten seconds, so the voltage check (0.27.7) and the 3-minute silent-row
+  check (0.27.5) remain the ones that cover riding; while charging this one answers in 10 s.
+
+## 0.27.7 – 2026-10-04
+- **Fast pack-dropout alarm** (`pack_dropout`), now from the packs' voltages instead of their
+  slow current rows: the two packs are in parallel, so both BMS must report the same voltage. A
+  pack that is cut off stays at its resting voltage while the other carries everything and sags
+  twice as much (about 4.4 V apart at 20 A here). The alarm fires when the two are at least
+  1.0 V apart in the same direction for 2.5 s, checked on every BMS row as it arrives.
+  On real frames from 100 black boxes and on a full recorded ride: 0 false alarms. With a
+  dropout injected into the recorded ride at 60 moments under at least 10 A it was found in a
+  median of 4.8 s (it needs load, so it takes longer if the rider eases off at that moment).
+  Not yet seen against a real fault.
+
+## 0.27.6 – 2026-10-04
+- **Pack imbalance alarm is back** (`pack_current`): the two packs' reported currents differ by
+  more than 30 %. While charging over 10 seconds; while riding over 5 minutes, because the BMS
+  current rows are slow and not simultaneous – over 10 s a healthy ride showed more than 30 %
+  difference a third of the time (117 false alarms), over 5 minutes at most 21 %. It replaces the
+  instantaneous shunt-ratio check that was switched off in 0.22.0. 0 false alarms when the
+  recorded ride and charge are replayed.
+
+## 0.27.5 – 2026-10-04
+- **Alarm for a current row that stays silent** (`row_silent`): one of the four BMS current rows
+  reports nothing (3-minute mean at most 0.15 A and under 5 % of the others) while the other
+  three average at least 1.5 A. This is how the earlier pack failure on this wheel first showed.
+  The instantaneous dropout check had to be switched off in 0.22.0 because the rows are slow and
+  not simultaneous; compared as 3-minute means they are usable. On the recorded ride and charge
+  the lowest row never went below 0.36 of the others (0 false alarms in 7100 updates), and the
+  same charge with one row zeroed raised the alarm after 136 s.
+
+## 0.27.4 – 2026-10-04
+- The same page is shown on the computer and on the phone, so "this device" was ambiguous. The
+  page now asks the app whether the viewer is the machine running it (`/api/whoami`): the
+  buttons for this device's Bluetooth and GPS appear only on other devices, and the text says
+  which device you are looking from and what pressing the button will do.
+
+## 0.27.3 – 2026-10-04
+- The header now says in plain words who holds the wheel's single Bluetooth connection: the
+  computer, another device passing data on, nobody (searching), or released until a given time
+  (yellow dot). The same sentence is shown on the Bluetooth switch card.
+- Releasing the wheel to a phone app can now last 3 h, 8 h or until taken back (up to a day);
+  one hour was too short for a ride.
+
+## 0.27.2 – 2026-10-04
+- **Switch Bluetooth to the viewing device**: "Använd den här enhetens Bluetooth" (Logg tab) makes
+  the computer release the wheel while the phone or tablet showing the page connects with Web
+  Bluetooth and forwards the raw data to `/api/inject`; pressing again switches back, and if the
+  device disappears the computer takes the wheel back within two minutes. Needs https and a
+  browser with Web Bluetooth (Chrome on Android/desktop; on iPhone a special browser such as
+  Bluefy). Not yet tried against a wheel.
+
+## 0.27.1 – 2026-10-04
+- **One address on every network**: the app announces `falcon.local` (mDNS, via avahi) for
+  whatever address the machine has right now and again when it changes, so the phone can keep a
+  single bookmark – `https://falcon.local:8443` – at home and on its own hotspot
+  (`FALCON_MDNS_NAME`, empty = off).
+
 ## 0.27.0 – 2026-10-04
 - **Ready for a small Linux board on the wheel** (so the laptop can stay at home):
   `deploy/install.sh` sets the app up as a boot-time service on Raspberry Pi OS / Debian / Armbian

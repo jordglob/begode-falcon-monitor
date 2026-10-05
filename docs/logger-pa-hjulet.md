@@ -43,11 +43,12 @@ ett riktigt kort ännu. Bluetooth-stabiliteten på andra kort än Raspberry Pi �
 ## Användning
 
 - **Slå på strömmen till kortet.** Efter ungefär en halv minut söker appen efter hjulet.
-- **Telefonen:** slå på Internetdelning och öppna `http://KORTETS-NAMN.local:8096`.
-- **Position från telefonen:** öppna i stället `https://KORTETS-NAMN.local:8443`, godkänn
-  certifikatvarningen (certifikatet är kortets eget), gå till Position & turer och tryck
-  "Använd den här enhetens GPS". Sidan måste vara öppen och skärmen tänd för att positionen
-  ska skickas.
+- **Telefonen:** slå på Internetdelning och öppna `https://falcon.local:8443`. Det är samma
+  adress hemma och ute: appen annonserar namnet `falcon.local` för den adress kortet har just
+  nu. Godkänn certifikatvarningen första gången (certifikatet är kortets eget).
+- **Position från telefonen:** gå till Position & turer och tryck "Använd den här enhetens
+  GPS". Sidan måste vara öppen och skärmen tänd för att positionen ska skickas.
+- Vanlig http utan telefonens GPS finns på `http://falcon.local:8096`.
 - **USB-GPS:** hittas automatiskt om den syns under `/dev/serial/by-id`. Annars:
   `FALCON_GPS_DEV=/dev/ttyACM0` (och `FALCON_GPS_BAUD=9600` för en serieansluten modul) i
   tjänstefilen.
@@ -57,6 +58,7 @@ ett riktigt kort ännu. Bluetooth-stabiliteten på andra kort än Raspberry Pi �
 
 | Variabel | Betydelse | Standard |
 |---|---|---|
+| `FALCON_MDNS_NAME` | Namnet som annonseras (`NAMN.local`); tomt = av | falcon |
 | `FALCON_PORT` | Sidans port | 8096 |
 | `FALCON_HTTPS_PORT` | Https-dörren (krävs för telefonens GPS); 0 = av | 8443 |
 | `FALCON_GPS` | `0` stänger av kortets egen GPS-läsning | auto |

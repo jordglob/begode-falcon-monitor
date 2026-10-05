@@ -9,7 +9,7 @@
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
 header{display:flex;gap:12px;align-items:center;padding:12px 16px;background:var(--card);position:sticky;top:0}
 header h1{font-size:17px;margin:0}#conn{font-size:13px;color:var(--mut)}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);margin-right:6px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--bad);margin-right:6px}.dot.rel{background:var(--warn)}
 .dot.on{background:var(--ok)}
 nav{display:flex;gap:4px;padding:8px 16px}nav button{flex:1;padding:10px;border:0;border-radius:8px;background:var(--card);color:var(--fg);font-size:15px}
 nav button.act{background:var(--acc);color:#000}
@@ -91,7 +91,8 @@ section.overlay.open{display:block}
     <div class="grid" id="livestats" style="margin-top:8px"></div>
     <div class="note">Uppdateras varannan sekund medan datorn är med på turen. Titta inte på skärmen när du kör – larmen hörs.</div></div>
   <div class="card"><h2>Position</h2><div class="grid" id="gpsmain"></div><div class="note" id="gpsnote"></div>
-    <div style="margin-top:8px"><button class="btn" id="geobtn" onclick="phoneGps()">Använd den här enhetens GPS</button> <span class="note" id="geonote"></span></div></div>
+    <div style="margin-top:8px"><button class="btn" id="geobtn" onclick="phoneGps()" style="display:none">Använd den här enhetens GPS</button> <span class="note" id="geonote"></span>
+      <div class="note" id="geohelp"></div></div></div>
   <div class="card"><h2>Turer</h2><div id="ridemerge"></div><table id="ridelist"></table>
     <div id="ridemodes" style="margin-top:10px;display:none"></div>
     <div id="ridemap" style="height:420px;border-radius:10px;margin-top:6px;display:none"></div>
@@ -179,6 +180,10 @@ section.overlay.open{display:block}
     Ingen position skickas någonstans; bara områdets gränser. Höjddata: © Lantmäteriet (CC BY 4.0) / © Copernicus.</div></div>
 </section>
 <section id="log"><div class="card"><h2>Händelser</h2><table id="events"></table></div>
+  <div class="card"><h2>Växla Bluetooth till den här enheten</h2>
+    <div id="btwho" style="margin-bottom:8px"></div>
+    <button class="btn" id="blebtn" onclick="phoneBle()" style="display:none">Låt den här enheten ta över hjulets Bluetooth</button> <span class="note" id="blenote"></span>
+    <div class="note" id="blehelp"></div></div>
   <div class="card"><h2>Släpp hjulet till mobilappen</h2><div id="relbtns"></div>
     <div class="note">Hjulet tar bara en Bluetooth-anslutning. Släpp den en stund för att använda Begode-appen; servern tar tillbaka hjulet när tiden gått ut eller när du trycker "Ta tillbaka".</div></div>
   <div class="card"><h2>Anslutningens stabilitet</h2><div class="grid" id="stab"></div><table id="drops"></table></div>
@@ -198,8 +203,9 @@ setTimeout(()=>{try{if(location.hash.length>1)return;const t=localStorage.getIte
 async function tick(){
   try{
     const [s,e]=await Promise.all([fetch('/api/state').then(r=>r.json()),fetch('/api/energy').then(r=>r.json())]);
-    const L=s.link;$('dot').className='dot'+(L.connected?' on':'');
-    $('status').textContent=L.status+(L.last_frame_age_s!=null?` · ${L.last_frame_age_s}s sedan`:'');
+    const L=s.link;const W=btWho(L);$('dot').className='dot'+(L.connected?' on':W.rel?' rel':'');
+    $('status').textContent=W.text+(L.connected&&L.last_frame_age_s!=null?` · data för ${L.last_frame_age_s} s sedan`:'');
+    if($('btwho'))$('btwho').innerHTML=`<b>Just nu:</b> ${W.long}`;
     const p0=s.snapshot.p0||{},p4=s.snapshot.p4||{};
     $('ride').innerHTML=kv('Fart',fmt(p0.speed_kmh,1,'km/h'))+kv('Spänning',fmt(e.battery.voltage_v,1,'V'))
       +kv('Mätarställning',p4.odometer_raw!=null?fmt(p4.odometer_raw/1000,1,'km'):'—')
@@ -309,6 +315,56 @@ async function vertick(){try{const v=await fetch('/api/version').then(r=>r.json(
   $('versions').innerHTML=kv('Appen',v.app)+kv('Bluetooth-modul',`${v.ble_module.firmware||'—'} (hw ${v.ble_module.hardware||'—'}, ${v.ble_module.manufacturer||'—'})`)
     +kv('Hjulets firmware',v.wheel_firmware||`<span style="font-size:13px">${v.wheel_firmware_note}</span>`);}catch(e){}}
 let ctlToken=null,ctlTokenAt=0,ctlBusy=false;
+// ---------- this device's Bluetooth instead of the computer's (Web Bluetooth -> /api/inject) ----------
+let bleDev=null,bleQ=[],bleSend=null,bleKeep=null,bleSent=0,bleStopping=false;
+const bleNote=t=>{$('blenote').textContent=t};
+async function bleAttach(dev){
+  const srv=await dev.gatt.connect(),svc=await srv.getPrimaryService(0xffe0),ch=await svc.getCharacteristic(0xffe1);
+  ch.addEventListener('characteristicvaluechanged',e=>{const v=new Uint8Array(e.target.value.buffer,e.target.value.byteOffset,e.target.value.byteLength);
+    bleQ.push(Array.from(v,b=>b.toString(16).padStart(2,'0')).join(''))});
+  await ch.startNotifications()}
+async function bleStop(resume){bleStopping=true;clearInterval(bleSend);clearInterval(bleKeep);bleSend=bleKeep=null;
+  try{bleDev&&bleDev.gatt.connected&&bleDev.gatt.disconnect()}catch(e){}
+  bleDev=null;bleQ=[];$('blebtn').textContent='Använd den här enhetens Bluetooth';
+  if(resume){try{await post('/api/link/resume')}catch(e){}}bleStopping=false}
+async function phoneBle(){
+  if(bleDev){await bleStop(true);bleNote('Växlat tillbaka: datorn ansluter till hjulet igen.');return}
+  if(!window.isSecureContext){$('blenote').innerHTML=`Kräver https. Öppna <a href="https://${location.hostname}:8443/">https://${location.hostname}:8443</a> och tryck här igen.`;return}
+  if(!navigator.bluetooth){bleNote('Den här webbläsaren kan inte använda Bluetooth från en webbsida. Fungerar i Chrome på Android och dator; på iPhone krävs en särskild webbläsare, t.ex. Bluefy.');return}
+  try{
+    bleNote('Datorn släpper hjulet … välj hjulet i listan som kommer upp.');
+    await post('/api/link/release',{minutes:2});                       // the wheel takes one connection
+    const dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'GotWay'},{namePrefix:'Begode'}],optionalServices:[0xffe0]});
+    await bleAttach(dev);bleDev=dev;bleSent=0;$('blebtn').textContent='Växla tillbaka till datorns Bluetooth';
+    dev.addEventListener('gattserverdisconnected',async()=>{if(bleStopping||!bleDev)return;bleNote('Tappade hjulet – ansluter igen …');
+      for(let i=0;i<20&&bleDev;i++){try{await bleAttach(dev);bleNote('Ansluten igen.');return}catch(e){await new Promise(r=>setTimeout(r,1500))}}
+      if(bleDev){await bleStop(true);bleNote('Fick inte tillbaka hjulet. Datorn tar över igen.')}});
+    bleSend=setInterval(()=>{if(!bleQ.length)return;const data=bleQ.splice(0);
+      fetch('/api/inject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data,source:'telefon'})})
+        .then(r=>r.json()).then(j=>{if(j.ok){bleSent+=data.length;bleNote(`Den här enheten har hjulet och skickar data vidare (${bleSent} paket). Håll sidan öppen och skärmen tänd.`)}else bleNote('Datorn tog inte emot: '+(j.error||'okänt fel'))})
+        .catch(()=>bleNote('Når inte datorn just nu – data går förlorade tills nätet är tillbaka.'))},300);
+    bleKeep=setInterval(()=>{post('/api/link/release',{minutes:2}).catch(()=>{})},45000);   // if this device disappears the computer takes over within 2 min
+    try{navigator.wakeLock&&await navigator.wakeLock.request('screen')}catch(e){}
+  }catch(e){await bleStop(true);bleNote('Det gick inte: '+(e&&e.message?e.message:e))}}
+// Is this browser on the machine that runs the app, or on another device (a phone)? The same
+// page is shown on both, so everything that says "this device" is worded per viewer.
+let VIEW={local:null,host:'datorn'};
+async function whoami(){try{VIEW=await fetch('/api/whoami').then(r=>r.json())}catch(e){return}
+  const app=`datorn som kör appen (${VIEW.host})`,adr=`https://falcon.local:8443`;
+  $('blebtn').style.display=VIEW.local?'none':'';$('geobtn').style.display=VIEW.local?'none':'';
+  $('blehelp').innerHTML=VIEW.local
+    ?`Du tittar nu från ${app}. Det är den som ansluter till hjulet. Vill du att en telefon ska ta över Bluetooth: öppna <b>${adr}</b> på telefonen, gå till den här fliken och tryck på knappen som visas där.`
+    :`Du tittar nu från en annan enhet än ${app}. Tryck på knappen, så tar <b>den här enheten</b> över hjulets Bluetooth och skickar data vidare till datorn. Allt annat fungerar som vanligt, och ett tryck till lämnar tillbaka hjulet. Kräver https och en webbläsare som kan Bluetooth från en webbsida: Chrome på Android och dator; på iPhone en särskild webbläsare, t.ex. Bluefy.`;
+  $('geohelp').innerHTML=VIEW.local
+    ?`Du tittar nu från ${app}, som använder sin egen GPS. Vill du använda telefonens GPS i stället: öppna <b>${adr}</b> på telefonen och tryck på knappen som visas här.`
+    :`Skickar <b>den här enhetens</b> position till ${app}, som då använder den i stället för sin egen GPS.`}
+// who holds the wheel's single Bluetooth connection, in plain words
+function btWho(L){const hm=t=>new Date(t*1000).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'});
+  if(L.bridge&&bleDev)return {text:'Bluetooth: den här enheten har hjulet',long:'Den här enheten är ansluten till hjulet och skickar data vidare till datorn. Datorns egen Bluetooth står av.'};
+  if(L.bridge)return {text:`Bluetooth: en annan enhet (${L.bridge}) har hjulet`,long:`En annan enhet (${L.bridge}) är ansluten till hjulet och skickar data till datorn. Datorns egen Bluetooth står av.`};
+  if(L.paused_until)return {rel:true,text:`Bluetooth: släppt till ${hm(L.paused_until)}`,long:`Datorn har släppt hjulet till kl. ${hm(L.paused_until)} och ansluter inte under tiden. Hjulet är fritt för en annan app eller enhet.`};
+  if(L.connected)return {text:'Bluetooth: datorn har hjulet',long:'Datorn är ansluten till hjulet med sin egen Bluetooth.'};
+  return {text:'Bluetooth: datorn söker hjulet',long:`Ingen är ansluten härifrån. Datorn söker hjulet (${L.status}).`}}
 async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});return r.json()}
 async function ctlEnable(){const r=await post('/api/control/enable');if(!r.ok){$('ctlnote').textContent='⛔ '+r.error;return}
   ctlToken=r.token;ctlTokenAt=Date.now();ctltick()}
@@ -564,7 +620,7 @@ async function chgtick(){try{const c=await fetch('/api/charge').then(r=>r.json()
     <button class="btn" ${c.plug_configured?'':'disabled'} onclick="post('/api/charge/plug',{on:false}).then(chgtick)">Kontakt av</button>`;}catch(e){}}
 async function chgSet(b){const r=await post('/api/charge/config',b);if(!r.ok)$('chgbtn').insertAdjacentHTML('beforeend',' <span class="bad">⛔ '+r.error+'</span>');else chgtick()}
 function reltick(L){const p=L.paused_until;$('relbtns').innerHTML=p?`<span class="warn">Släppt till ${new Date(p*1000).toLocaleTimeString('sv-SE')}</span> <button class="btn" onclick="post('/api/link/resume').then(tick)">Ta tillbaka</button>`
-  :`<button class="btn" onclick="post('/api/link/release',{minutes:15}).then(tick)">Släpp i 15 min</button> <button class="btn" onclick="post('/api/link/release',{minutes:60}).then(tick)">Släpp i 1 h</button>`}
+  :[[15,'15 min'],[60,'1 h'],[180,'3 h'],[480,'8 h'],[1440,'tills jag tar tillbaka (högst ett dygn)']].map(([m,t])=>`<button class="btn" onclick="post('/api/link/release',{minutes:${m}}).then(tick)">Släpp ${m<1440?'i ':''}${t}</button>`).join(' ')}
 // ---------- history charts (uPlot, vendored). One measure per chart: no dual axes.
 const GDEF=[
   {k:'voltage_v',t:'Batterispänning',u:'V',c:['#3987e5']},
@@ -707,7 +763,7 @@ tick();logtick();
   if(h.startsWith('#pos')||m){document.querySelector('nav button[data-t=pos]')?.click();if(m){const md=h.match(/mode=(\w+)/);if(md)rideMode=md[1];setTimeout(()=>showRide(+m[1]),300)}}
   else if(h==='#prefs')togglePrefs(true);
   else if(h.length>1)document.querySelector(`nav button[data-t="${h.slice(1)}"]`)?.click()})();
-guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);livetick();setInterval(livetick,2000);setInterval(()=>{graphtick(false);chtick(false);ridestick(false)},10000);alarmtick();setInterval(alarmtick,1000);thermtick();setInterval(thermtick,2000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
+whoami();guardtick();setInterval(guardtick,2000);healthtick();setInterval(healthtick,5000);cellstick();setInterval(cellstick,1000);alltick();setInterval(alltick,1000);vertick();setInterval(vertick,10000);bktick();setInterval(bktick,15000);prefshint();setInterval(prefshint,30000);beeptick();setInterval(()=>{if($('beeps').classList.contains('act'))beeptick()},1000);gpstick();setInterval(gpstick,2000);livetick();setInterval(livetick,2000);setInterval(()=>{graphtick(false);chtick(false);ridestick(false)},10000);alarmtick();setInterval(alarmtick,1000);thermtick();setInterval(thermtick,2000);setInterval(()=>graphtick(false),10000);chgtick();setInterval(chgtick,5000);setInterval(()=>ridestick(false),5000);ctltick();setInterval(()=>{if(!ctlToken||Date.now()-ctlTokenAt>30000)ctltick()},1000);setInterval(tick,1000);setInterval(logtick,5000);
 // ---------- hover explanations: shown after ~1 s on a value tile or a cell ----------
 const TIPS={
 'Fart':'Hjulets egen fart, från hjulets datapaket (inte GPS).',

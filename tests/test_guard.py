@@ -363,3 +363,239 @@ def test_bms_rows_agreeing_or_not_charging_is_quiet(real_snapshot):
     for i in range(60):
         f = g.update(s, now=100 + i)
     assert "bms_rows" not in codes(f)
+
+
+# ---------- a current row that never reports anything ----------
+def _rows(base, currents):
+    s = copy.deepcopy(base)
+    for k, a in zip(sorted(s["groups"]), currents):
+        s["groups"][k]["current_a"] = a
+    return s
+
+
+def test_silent_current_row_is_an_alarm(real_snapshot):
+    """The earlier pack failure: one of the four rows never reported any amperes."""
+    g = Guard()
+    f = []
+    for t in range(200):                                   # charging: three rows at ~3.7 A, one dead
+        f = g.update(_rows(real_snapshot, [3.7, 3.6, 0.0, 3.7]), now=float(t))
+    hit = [x for x in f if x.code == "row_silent"]
+    assert len(hit) == 1 and hit[0].level == "alarm" and hit[0].where == "LB – BMS 2 (sträng B), rad 1"
+    assert "0.0 A" in hit[0].text and "3.7 A" in hit[0].text
+
+
+def test_silent_row_needs_time_and_current_in_the_others(real_snapshot):
+    g = Guard()
+    for t in range(100):                                   # under two minutes: not yet
+        f = g.update(_rows(real_snapshot, [3.7, 3.6, 0.0, 3.7]), now=float(t))
+    assert "row_silent" not in codes(f)
+    g = Guard()
+    for t in range(300):                                   # nobody carries current: nothing to compare
+        f = g.update(_rows(real_snapshot, [0.1, 0.0, 0.0, 0.2]), now=float(t))
+    assert "row_silent" not in codes(f)
+    g = Guard()
+    for t in range(300):                                   # healthy spread seen on real rides (lowest 0.36 of the others)
+        f = g.update(_rows(real_snapshot, [1.1, 3.0, 3.2, 3.0]), now=float(t))
+    assert "row_silent" not in codes(f)
+
+
+# ---------- the two packs report different currents ----------
+def _packs(base, a, b, activity):
+    s = copy.deepcopy(base)
+    for k, cur in ((1, a), (2, b)):
+        s["bms"][k]["current_a"], s["bms"][k]["activity"] = cur, activity
+    s["battery_current_a"] = -(a + b) if activity == "laddning" else a + b
+    return s
+
+
+def test_pack_imbalance_while_charging_alarms_within_ten_seconds(real_snapshot):
+    g = Guard()
+    for t in range(8):
+        f = g.update(_packs(real_snapshot, 3.6, 5.2, "laddning"), now=float(t))
+    assert "pack_current" not in codes(f)                  # the window is not full yet
+    for t in range(8, 12):
+        f = g.update(_packs(real_snapshot, 3.6, 5.2, "laddning"), now=float(t))
+    hit = [x for x in f if x.code == "pack_current"]
+    assert len(hit) == 1 and hit[0].level == "alarm" and "BMS 2" in hit[0].text.split("mer ström")[0]
+    assert "under laddning" in hit[0].text and 30 < hit[0].value < 45
+
+
+def test_pack_imbalance_while_riding_needs_five_minutes(real_snapshot):
+    g = Guard()
+    for t in range(60):                                    # a minute of a big difference: normal while riding
+        f = g.update(_packs(real_snapshot, 2.0, 6.0, "urladdning"), now=float(t))
+    assert "pack_current" not in codes(f)
+    for t in range(60, 330):
+        f = g.update(_packs(real_snapshot, 2.0, 6.0, "urladdning"), now=float(t))
+    assert "pack_current" in codes(f, "alarm")
+
+
+def test_healthy_packs_and_low_current_are_quiet(real_snapshot):
+    g = Guard()
+    for t in range(400):                                   # 21 % apart: the most seen on a healthy ride
+        f = g.update(_packs(real_snapshot, 3.0, 3.7, "urladdning"), now=float(t))
+    assert "pack_current" not in codes(f)
+    g = Guard()
+    for t in range(400):                                   # next to no current: a ratio means nothing
+        f = g.update(_packs(real_snapshot, 0.1, 0.4, "urladdning"), now=float(t))
+    assert "pack_current" not in codes(f)
+
+
+# ---------- fast pack dropout from the packs' voltages ----------
+def _rows_v(g, t0, seconds, v1, v2):
+    """BMS rows arrive every 0.3 s in the order 0,1,2,3 (rows 0-1 = BMS 1, 2-3 = BMS 2)."""
+    t, k = t0, 0
+    while t < t0 + seconds:
+        g.on_bms_row(t, 1 if k % 4 < 2 else 2, v1 if k % 4 < 2 else v2)
+        t += 0.3
+        k += 1
+    return t
+
+
+def test_pack_cut_off_under_load_alarms_within_seconds(real_snapshot):
+    g = Guard()
+    t = _rows_v(g, 0.0, 20, 95.0, 95.1)                     # healthy
+    assert "pack_dropout" not in codes(g.update(real_snapshot, now=t))
+    t1 = _rows_v(g, t, 2.0, 91.0, 95.4)                     # pack 2 cut off at 20 A: 4.4 V apart
+    assert "pack_dropout" not in codes(g.update(real_snapshot, now=t1))     # not yet two row cycles
+    t2 = _rows_v(g, t1, 2.0, 91.0, 95.4)
+    hit = [x for x in g.update(real_snapshot, now=t2) if x.code == "pack_dropout"]
+    assert len(hit) == 1 and hit[0].level == "alarm" and t2 - t < 5.0
+    assert "BMS 1 (sträng A) 91.0 V" in hit[0].text and "BMS 2 (sträng B) 95.4 V" in hit[0].text
+    t3 = _rows_v(g, t2, 20, 95.0, 95.0)                     # healthy again: the alarm clears
+    assert "pack_dropout" not in codes(g.update(real_snapshot, now=t3))
+
+
+def test_single_readings_far_apart_are_not_a_dropout(real_snapshot):
+    """Rows are not simultaneous: 2.8 V apart in one reading was seen on a healthy ride."""
+    g = Guard()
+    t = 0.0
+    for k in range(200):
+        d = 2.8 if k % 10 == 0 else 0.1                    # a spike now and then, in changing directions
+        g.on_bms_row(t, 1, 95.0 + (d if k % 20 == 0 else 0)); t += 0.3
+        g.on_bms_row(t, 2, 95.0 + (d if k % 20 == 10 else 0)); t += 0.3
+    assert "pack_dropout" not in codes(g.update(real_snapshot, now=t))
+    g.on_bms_row(t, 1, 91.0)                               # stale partner: BMS 2 not heard for a while
+    g.on_bms_row(t + 5, 1, 91.0)
+    g.on_bms_row(t + 9, 1, 91.0)
+    assert "pack_dropout" not in codes(g.update(real_snapshot, now=t + 9))
+
+
+# ---------- fast dead current row ----------
+def _rows_i(g, t0, seconds, amps, activity="urladdning"):
+    t, k = t0, 0
+    while t < t0 + seconds:
+        g.on_bms_row(t, 1 if k % 4 < 2 else 2, 95.0, k % 4, amps[k % 4], activity)
+        t += 0.3
+        k += 1
+    return t
+
+
+def test_dead_current_row_under_load_alarms_in_about_ten_seconds(real_snapshot):
+    """The owner's case: the broken pack showed 0.1-0.3 A while the others showed about 10 A."""
+    g = Guard()
+    t = _rows_i(g, 0.0, 8.0, [10.2, 0.1, 9.8, 10.5])
+    assert "row_dead" not in codes(g.update(real_snapshot, now=t))
+    t = _rows_i(g, t, 4.0, [10.2, 0.3, 9.8, 10.5])
+    hit = [x for x in g.update(real_snapshot, now=t) if x.code == "row_dead"]
+    assert len(hit) == 1 and hit[0].level == "alarm" and hit[0].where == "RF – BMS 1 (sträng A), rad 2" and t < 13
+
+
+def test_dead_row_while_charging_needs_less_current_in_the_others(real_snapshot):
+    g = Guard()
+    t = _rows_i(g, 0.0, 12.0, [3.7, 3.6, 0.1, 3.7], "laddning")
+    assert "row_dead" in codes(g.update(real_snapshot, now=t), "alarm")
+
+
+def test_rows_near_zero_while_the_others_are_low_too_is_normal(real_snapshot):
+    g = Guard()
+    t = _rows_i(g, 0.0, 30.0, [2.5, 0.1, 3.0, 2.8])        # riding: the others are not high enough to judge
+    t = _rows_i(g, t, 6.0, [12.0, 0.2, 11.0, 12.5])        # high, but shorter than the hold time
+    t = _rows_i(g, t, 30.0, [12.0, 4.0, 11.0, 12.5])       # the row wakes up
+    assert "row_dead" not in codes(g.update(real_snapshot, now=t))
+
+
+def test_silent_row_catches_the_owners_case_of_a_few_tenths_of_an_ampere(real_snapshot):
+    g = Guard()
+    for t in range(200):                                   # riding: the broken pack shows 0.1-0.3 A, the others ~3 A
+        f = g.update(_rows(real_snapshot, [2.6, 3.1, [0.1, 0.2, 0.3][t % 3], 2.9]), now=float(t))
+    hit = [x for x in f if x.code == "row_silent"]
+    assert len(hit) == 1 and hit[0].where == "LB – BMS 2 (sträng B), rad 1"
+
+
+# ---------- frozen group: the real fault of June 2026 ----------
+def _groups(g, t0, seconds, fn):
+    """fn(k, t) -> (group voltage, amperes) for row k at time t; rows arrive every 0.3 s."""
+    t, n = t0, 0
+    while t < t0 + seconds:
+        k = n % 4
+        v, a = fn(k, t)
+        g.on_bms_row(t, 1 if k < 2 else 2, 95.0, k, a, "urladdning", v)
+        t += 0.3
+        n += 1
+    return t
+
+
+def test_frozen_group_with_no_current_alarms_while_riding(real_snapshot):
+    """RF 'all the time reports the same voltage and 0 current' while the others sag and carry load."""
+    import math
+    g = Guard()
+    healthy = lambda k, t: (round(47.0 - 0.8 * math.sin(t / 2 + k), 1), 4.0 + k)
+    t = _groups(g, 0.0, 20, healthy)
+    assert "group_frozen" not in codes(g.update(real_snapshot, now=t))
+    broken = lambda k, t: (47.8, 0.0) if k == 1 else healthy(k, t)
+    t2 = _groups(g, t, 14, broken)
+    hit = [x for x in g.update(real_snapshot, now=t2) if x.code == "group_frozen"]
+    assert len(hit) == 1 and hit[0].level == "alarm" and hit[0].where == "RF – BMS 1 (sträng A), rad 2"
+    assert "47.8 V" in hit[0].text
+
+
+def test_everything_standing_still_at_rest_is_not_a_frozen_group(real_snapshot):
+    g = Guard()
+    t = _groups(g, 0.0, 40, lambda k, t: (47.2, 0.0))       # parked: nothing moves, nothing flows
+    assert "group_frozen" not in codes(g.update(real_snapshot, now=t))
+    g = Guard()
+    import math
+    t = _groups(g, 0.0, 40, lambda k, t: (47.8, 3.0) if k == 1 else (round(47.0 - 0.8 * math.sin(t / 2 + k), 1), 5.0))
+    assert "group_frozen" not in codes(g.update(real_snapshot, now=t))     # still voltage but it carries current
+
+
+# ---------- the four group voltages at rest ----------
+def _rested(g, seconds=40):
+    for k in range(int(seconds / 0.3)):
+        g.load_spread.trace.add(k * 0.3, 0.2)
+    return seconds
+
+
+def _groupv(base, volts):
+    s = copy.deepcopy(base)
+    for k, v in zip(sorted(s["groups"]), volts):
+        s["groups"][k]["half_voltage_v"] = v
+    s["battery_current_a"] = 0.2
+    return s
+
+
+def test_group_voltages_apart_at_rest_like_june_2026(real_snapshot):
+    g = Guard()
+    t = _rested(g)
+    f = g.update(_groupv(real_snapshot, [46.6, 47.8, 47.3, 44.8]), now=t)
+    assert "group_voltage" not in codes(f)                 # must have been there for a while
+    for k in range(1, 40):
+        g.load_spread.trace.add(t + k * 0.3, 0.2)
+    f = g.update(_groupv(real_snapshot, [46.6, 47.8, 47.3, 44.8]), now=t + 11.5)
+    hit = [x for x in f if x.code == "group_voltage"]
+    assert len(hit) == 1 and hit[0].level == "alarm" and hit[0].where == "RB ↔ RF" and hit[0].value == 3.0
+    assert "0,5 V" in hit[0].text
+
+
+def test_group_voltages_within_begodes_limit_or_under_load_are_quiet(real_snapshot):
+    g = Guard()
+    t = _rested(g)
+    for dt in (0, 12):
+        f = g.update(_groupv(real_snapshot, [47.2, 47.1, 47.3, 47.6]), now=t + dt)     # 0.5 V: on the limit
+    assert "group_voltage" not in codes(f)
+    g = Guard()
+    for k in range(200):                                   # riding: groups differ by volts, measured at different moments
+        g.load_spread.trace.add(k * 0.3, 20.0)
+    f = g.update(_groupv(real_snapshot, [46.0, 47.8, 47.3, 45.0]), now=60.0)
+    assert "group_voltage" not in codes(f)

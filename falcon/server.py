@@ -80,6 +80,9 @@ def _on_frame(f) -> None:
     ts = time.time()
     if f.type == 1:
         _last_group_ts = ts
+        g1 = state.groups.get(f.sub) or {}
+        guard.on_bms_row(ts, g1.get("bms"), g1.get("voltage_v"), f.sub, g1.get("current_a"),
+                         g1.get("activity"), g1.get("half_voltage_v"))     # fast pack/group checks
     beepwatch.frame(ts, f.type, f.sub, f.payload.hex())
     if f.type == 0:
         try:
@@ -174,6 +177,46 @@ link.on_event = log_event
 _wf = store.get_json("wheel_firmware")
 if _wf:
     link.device_info["wheel_firmware"] = _wf["value"]
+
+
+def _primary_ip() -> str | None:
+    """The address other devices on the current network reach us at (no packet is sent)."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 9))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+async def mdns_alias() -> None:
+    """One short address on every network: publish NAME.local (default falcon.local) for the
+    address we currently have, and again when it changes (home WiFi <-> the phone's hotspot).
+    Needs avahi (avahi-publish); without it this does nothing."""
+    import shutil
+    name = os.environ.get("FALCON_MDNS_NAME", "falcon")
+    if not name or not shutil.which("avahi-publish"):
+        return
+    proc, current = None, None
+    try:
+        while True:
+            ip = _primary_ip()
+            if ip != current or (proc is not None and proc.returncode is not None):
+                if proc is not None and proc.returncode is None:
+                    proc.terminate()
+                proc = (await asyncio.create_subprocess_exec(
+                    "avahi-publish", "-a", "-R", f"{name}.local", ip,
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)) if ip else None
+                if ip != current and ip:
+                    log_event(f"Adress: {name}.local pekar nu på {ip}")
+                current = ip
+            await asyncio.sleep(15)
+    finally:
+        if proc is not None and proc.returncode is None:
+            proc.terminate()
 
 
 MAIN_LOOP = None      # the loop the BLE/guard tasks live in; data from other threads is handed to it
@@ -331,7 +374,7 @@ async def lifespan(_app):
     ble_on = os.environ.get("FALCON_BLE", "1") != "0"
     tasks = [*([asyncio.create_task(link.run())] if ble_on else []), asyncio.create_task(sampler()),
              *([asyncio.create_task(gps.run())] if GPS_ON else []),
-             asyncio.create_task(guard_loop())]
+             asyncio.create_task(guard_loop()), asyncio.create_task(mdns_alias())]
     log_event("Tjänsten startad (endast läsning, inga kommandon skickas)")
     yield
     for t in tasks:
@@ -401,6 +444,14 @@ def api_health():
     for s in rep.get("sessions") or []:      # Ah of old discharge sessions came from the BMS current field
         s["pre_fix"] = s.get("kind") == "discharge" and pre_fix(s.get("start_ts"), FIX_TS)
     return rep
+
+
+@app.get("/api/whoami")
+def api_whoami(req: Request):
+    """Is the viewer the machine that runs the app, or another device? The page words its
+    'this device' controls differently for the two."""
+    import socket
+    return {"local": gate.is_local(_host(req)), "host": socket.gethostname()}
 
 
 @app.get("/api/version")
@@ -766,7 +817,7 @@ def api_ride(ride_id: int):
 async def api_link_release(req: Request):
     """Free the wheel for the phone app (allowed from any device – it only disconnects)."""
     body = await req.json() if (await req.body()) else {}
-    minutes = max(1, min(int(body.get("minutes", 15)), 240))
+    minutes = max(1, min(int(body.get("minutes", 15)), 1440))     # a whole ride with breaks fits
     link.release(minutes * 60)
     return {"ok": True, "minutes": minutes}
 

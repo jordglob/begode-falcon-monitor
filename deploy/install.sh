@@ -15,7 +15,7 @@ UNIT="$HOME/.config/systemd/user/begode-falcon.service"
 echo "== 1/5 system packages (python venv, bluetooth)"
 if ! python3 -c 'import venv, ensurepip' 2>/dev/null || ! command -v bluetoothctl >/dev/null; then
   sudo apt-get update
-  sudo apt-get install -y python3-venv python3-pip bluez openssl
+  sudo apt-get install -y python3-venv python3-pip bluez openssl avahi-daemon avahi-utils
 else
   echo "   already installed"
 fi
@@ -57,5 +57,5 @@ for _ in $(seq 1 20); do
 done
 curl -s -m 3 http://localhost:8096/api/version || { echo "the app did not answer - see: journalctl --user -u begode-falcon"; exit 1; }
 echo
-echo "Done. Open http://$(hostname -I | awk '{print $1}'):8096 from a phone on the same network."
-echo "For the phone's own GPS use https://$(hostname -I | awk '{print $1}'):8443 and accept the certificate warning."
+echo "Done. One address on every network: https://falcon.local:8443 (accept the certificate warning once)."
+echo "Plain http, without the phone's GPS: http://falcon.local:8096 - or http://$(hostname -I | awk '{print $1}'):8096"

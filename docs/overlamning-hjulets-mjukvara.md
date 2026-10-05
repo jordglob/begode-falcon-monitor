@@ -90,9 +90,19 @@ värde, och ett avvisat kommando ger ett svar som säger det.
 | Balansering som aldrig blir klar | varning efter 2 h | alltid |
 | Strömdelning mellan paketen | se punkt C | under last |
 
-**Varför.** Hjulet har haft ett batterifel där ett av fyra parallella shuntmotstånd aldrig var
-lött och de övriga brann av ett efter ett. Det syntes inte utifrån. Två parallella paket som
-glider isär är det tidigaste tecknet på flera sorters batterifel.
+| En grupp fryst: samma spänning och ingen ström | 8 s, medan de andra rör sig ≥0,3 V och bär ≥1 A | under körning |
+| En grupps ström tyst | 10 s när de övriga visar ≥8 A; annars 3 min medel | körning och laddning |
+| De fyra gruppspänningarna | varning 0,5 V, larm 1,0 V (0,5 V är Begodes eget mått) | i vila |
+
+**Varför.** Det verkliga felet på det här hjulet (juni 2026) såg ut så här i Begodes egen app:
+gruppen RF "rapporterar hela tiden samma spänning och 0 ström" medan LF, LB och RB visade
+4,6–8,6 A. Gruppspänningarna låg 3,0 V isär (46,6 / 47,8 / 47,3 / 44,8 V). Alla statusrader var
+gröna och hjulet larmade aldrig. Följden blev pulserande pip i en lång uppförsbacke och sedan
+ett tvärt stopp över ett gupp. I den utbytta gruppen fanns brända komponenter. Gruppens
+mätkort hade alltså slutat mäta, och dess celler var obevakade.
+
+De fyra grupperna (12 celler var) heter LF, RF, LB, RB i Begodes app och kommer som BMS-rad
+0–3 i den ordningen; rad 0–1 är den främre strängen, rad 2–3 den bakre.
 
 **I appen.** `falcon/guard.py`, med mätreglerna i `falcon/sampling.py`.
 
